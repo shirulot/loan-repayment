@@ -341,10 +341,22 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
             context,
             title: '本金与利率',
             icon: Icons.percent_outlined,
-            summary: _principalRateSummary(),
+            summary: _currentLoanSummary(),
             children: [
-              _inputField('商贷期初本金', 'commercialOpeningBalance', suffix: '元'),
-              _inputField('公积金期初本金', 'providentOpeningBalance', suffix: '元'),
+              _subsectionLabel(context, '当前贷款余额'),
+              _readonlyField(
+                '当前商贷余额',
+                formatLoanMoney(_currentCommercialBalance()),
+                suffix: '元',
+              ),
+              _readonlyField(
+                '当前公积金余额',
+                formatLoanMoney(_currentProvidentBalance()),
+                suffix: '元',
+              ),
+              _subsectionLabel(context, '初期贷款本金与利率'),
+              _inputField('初期商贷本金', 'commercialOpeningBalance', suffix: '元'),
+              _inputField('初期公积金本金', 'providentOpeningBalance', suffix: '元'),
               _inputField('商贷年利率', 'commercialAnnualRate', suffix: '%'),
               _inputField('公积金年利率', 'providentAnnualRate', suffix: '%'),
             ],
@@ -384,18 +396,42 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     return years > 0 ? '$terms 期（$years 年）' : '$terms 期';
   }
 
-  String _principalRateSummary() {
-    final total =
-        widget.config.commercialOpeningBalance +
-        widget.config.providentOpeningBalance;
-    final rate = widget.config.commercialAnnualRate * 100;
-    return '¥${formatLoanMoney(total)}  ${rate.toStringAsFixed(2)}%';
+  // Current balances come from the generated plan, while opening principal stays editable.
+  double _currentCommercialBalance() {
+    final rows = widget.viewModel.rows;
+    return rows.isEmpty
+        ? widget.config.commercialOpeningBalance
+        : rows.first.commercialClosing;
+  }
+
+  double _currentProvidentBalance() {
+    final rows = widget.viewModel.rows;
+    return rows.isEmpty
+        ? widget.config.providentOpeningBalance
+        : rows.first.providentClosing;
+  }
+
+  String _currentLoanSummary() {
+    return '¥${formatLoanMoney(_currentCommercialBalance() + _currentProvidentBalance())}';
   }
 
   String _expectedPrepaymentSummary() {
     final rows = widget.viewModel.rows;
     final requested = rows.isEmpty ? 0.0 : rows.first.expectedPrepayment;
     return requested > 0 ? '¥${formatLoanMoney(requested)}' : '留空自动计算';
+  }
+
+  Widget _subsectionLabel(BuildContext context, String label) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 14, bottom: 2),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
   }
 
   Widget _cashFlowSummary(BuildContext context) {

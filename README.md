@@ -1,41 +1,62 @@
-# 提前还贷计算器（Flutter 多端应用）
+# 提前还贷计算器
 
-这是一个本地运行的 Flutter 应用，目标平台为 Android、macOS 和 Windows。应用不依赖业务服务器，计划数据默认保存在本机；Android 会按系统备份设置保留计划状态。
+一个离线运行的 Flutter 提前还贷规划工具。它根据商贷、公积金、现金流与实际提前还款记录生成滚动还款计划，帮助用户查看当前余额、近三期预测和预计结清月份。
 
-## 已实现功能
+应用不依赖业务服务器；贷款参数、现金流和实际还款记录只保存在本机。当前已适配 Android、macOS 与 Windows。
 
-- 按当前模型生成商贷、公积金和合计还款计划。
-- 表格同时保留商贷月供、公积金月供、本月月供总额、商贷减少额、公积金减少额和总减少额。
-- 在“实际提前还款”列直接录入真实扣款金额；从该月份开始，后续余额、正常月供、减少额和预期提前还款自动补正。
-- 计划不预设每月家庭支援和额外支援；实际金额在对应月份直接录入。
-- 当前月默认使用实际提前还款 17500 校准商贷余额；下个月商贷月供使用账单校准值（本金 1789.55、利息 986.24）。
-- 当前月、下个月和下下个月优先使用三组“近期期望还款额”；对应金额留空或为 0 时，会回退使用可供提前还贷额。第四个月起的预期提前还款也直接按可供提前还贷额计算；因为月供会下降，金额会自动递增，并向上取整到十元。
-- 计划从打开应用时的当前月开始计算，持续到余额实际清零；如果实际提前还款使余额提前清零，后续月份会自动移除。
-- 每月现金流支持记录“本月收入”“额外收入”和“每月生活费”，自动显示正值“当月月供”和“可供提前还贷额”（本月收入 - 当月月供 - 每月生活费 + 额外收入）。
-- 支持导出 Excel 兼容 `.xls`、CSV 和 JSON。导出文件位于应用 Documents 目录下的 `loan-repayment-plans` 文件夹。
-- 参数和实际提前还款会缓存到同一目录；应用启动时自动读取最近一次缓存。
-- 可填写贷款开始日期和总年限，应用会结合当前月份自动计算剩余期数；未填写时兼容使用原有剩余期数。
-- Android 已配置 Auto Backup 和设备迁移规则；删除后重装能否恢复取决于系统备份或设备迁移是否可用，不需要额外存储权限。
-- 主页面只显示计划概览，点击“查看详情”进入横屏友好的紧凑还款明细表。
+## 功能概览
+
+- **贷款计划**：分别计算商贷、公积金及合计的月供、提前还款、余额和月供减少额。
+- **动态结清**：从打开应用时的当前月开始生成，直至本金清零；实际提前还款使贷款提前结清后，后续月份会自动移除。
+- **实际还款校正**：在计划详情中录入某个月的实际提前还款金额后，该月及之后的余额、月供、预期提前还款都会重新计算。
+- **现金流计算**：记录本月收入、额外收入和每月生活费；可供提前还贷额按 `本月收入 - 当月月供 - 每月生活费 + 额外收入` 自动计算。
+- **近期期望还款**：当前月起的前三期可单独填写期望提前还款额；留空或填 `0` 时自动采用可供提前还贷额。之后月份同样按可供提前还贷额计算，并随月供下降自然递增。
+- **贷款期限**：填写贷款开始日期与总年限后，自动按当前月份计算剩余期数；未同时填写时保留手动设置的剩余期数。
+- **移动端界面**：首页提供现金流四宫格、参数折叠项和未来三期预览；“还款计划”Tab 直接显示完整明细。当前贷款余额与初期本金、利率分开显示。
+- **导出**：计划详情支持导出 Excel 兼容 `.xls`、CSV 和 JSON。
+- **本地缓存**：编辑后的贷款参数和实际提前还款会自动缓存，并在下次启动前恢复。
+
+## 使用方式
+
+1. 在首页填写或展开编辑现金流、贷款期限、本金与利率、近期期望还款额。
+2. 点击“应用并重算”，查看未来三期的预测结果。
+3. 切换至“还款计划”Tab，横向查看完整表格；在“实际提前还款”列填写银行实际扣款金额。
+4. 实际金额会优先于预测金额参与计算，后续计划随即自动更新。
+
+> 当前模型的首月用于余额校准，首个正常还款月使用配置中的银行账单本金和利息校准值。首次使用前，请按真实贷款与账单信息核对默认值。
+
+## 数据存储与备份
+
+- 本地状态文件：应用 Documents 目录下的 `loan-repayment-plans/loan-plan-state.json`。
+- 导出文件目录：应用 Documents 目录下的 `loan-repayment-plans`。
+- Android 已配置 Auto Backup 与设备迁移规则，仅备份上述状态文件；删除后重装是否恢复，取决于系统云备份或设备迁移是否可用，无需申请额外存储权限。
+- 导出文件为固定文件名，再次导出同一格式会覆盖该格式的上一次导出文件。
+
+## 开发环境
+
+- Flutter SDK：Dart `^3.12.2`
+- 主要依赖：`path_provider`
+- 平台：Android、macOS、Windows
 
 ## 运行
 
-在项目目录执行：
+在项目根目录执行：
 
 ```bash
 flutter pub get
+flutter devices
+flutter run -d <设备ID>
+```
+
+常用目标示例：
+
+```bash
 flutter run -d macos
 flutter run -d windows
 flutter run -d <Android设备ID>
 ```
 
-可以用下面的命令查看设备 ID：
-
-```bash
-flutter devices
-```
-
-## 构建安装包
+## 构建
 
 ```bash
 flutter build apk --release
@@ -43,15 +64,37 @@ flutter build macos --release
 flutter build windows --release
 ```
 
-Windows 构建需要在 Windows 环境执行；macOS 构建需要在 macOS 环境执行。Android 手机上可安装 `build/app/outputs/flutter-apk/app-release.apk`。
+- Android Release APK 输出：`build/app/outputs/flutter-apk/app-release.apk`。
+- macOS 构建需在 macOS 上执行；Windows 构建需在 Windows 上执行。
 
-本项目目录中也附带了本机已构建的安装包；Windows 版本请在 Windows 电脑上执行上面的构建命令生成。
-
-## 校验
+## 验证
 
 ```bash
 flutter analyze
 flutter test
 ```
 
-核心计算代码位于 `lib/domain/services/loan_calculator.dart`，页面和参数编辑位于 `lib/ui/features/loan/views/loan_plan_page.dart`，还款明细位于 `lib/ui/features/loan/views/loan_plan_detail_page.dart`，导出逻辑位于 `lib/data/services/loan_export_service.dart`，缓存逻辑位于 `lib/data/services/loan_cache_service.dart`。
+现有测试覆盖核心还款计算、实际还款对后续计划的影响、现金流、贷款期限换算、动态结清和金额格式化。
+
+## 目录说明
+
+```text
+lib/
+├── domain/
+│   ├── models/loan_models.dart                 # 贷款配置与计划行模型
+│   └── services/loan_calculator.dart            # 核心还款计算
+├── data/services/
+│   ├── loan_cache_service.dart                  # 本地状态缓存
+│   └── loan_export_service.dart                 # CSV、XLS、JSON 导出
+└── ui/
+    ├── theme/loan_palette.dart                  # 统一色板
+    └── features/loan/
+        ├── view_models/loan_planner_view_model.dart
+        └── views/                               # 首页、移动端与计划详情
+```
+
+## 计算说明
+
+- 可供提前还贷额为现金流预测值，不代表银行最终允许的提前还款金额。
+- 计划结果用于辅助规划；提前还款规则、违约金、实际利息和最终结清金额以银行账单及合同为准。
+- 金额显示保留两位小数，千分位格式不会在首尾显示逗号。
