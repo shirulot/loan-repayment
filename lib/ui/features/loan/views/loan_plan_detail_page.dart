@@ -9,9 +9,14 @@ import 'loan_plan_formatters.dart';
 
 /// Full-screen, compact view for editing and reviewing all repayment rows.
 class LoanPlanDetailPage extends StatefulWidget {
-  const LoanPlanDetailPage({super.key, required this.viewModel});
+  const LoanPlanDetailPage({
+    super.key,
+    required this.viewModel,
+    this.embedded = false,
+  });
 
   final LoanPlannerViewModel viewModel;
+  final bool embedded;
 
   @override
   State<LoanPlanDetailPage> createState() => _LoanPlanDetailPageState();
@@ -57,6 +62,8 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
     return ListenableBuilder(
       listenable: widget.viewModel,
       builder: (context, _) {
+        final content = _buildContent(context);
+        if (widget.embedded) return content;
         return Scaffold(
           appBar: AppBar(
             title: const Text('还款计划详情'),
@@ -77,61 +84,93 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
               const SizedBox(width: 8),
             ],
           ),
-          body: SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final tableWidth = math
-                    .max(constraints.maxWidth - 16, 980.0)
-                    .toDouble();
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+          body: SafeArea(child: content),
+        );
+      },
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tableWidth = math
+            .max(constraints.maxWidth - 16, 980.0)
+            .toDouble();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (widget.embedded)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 8, 4),
+                child: Row(
                   children: [
-                    if (_exportPath != null)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
-                        child: SelectableText(
-                          '最近导出：$_exportPath',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
+                    Expanded(
                       child: Text(
-                        '横屏窗口会尽量一次显示完整行；实际提前还款在淡黄色单元格中录入。',
-                        style: Theme.of(context).textTheme.bodySmall,
+                        '还款计划',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                    Expanded(
-                      child: Scrollbar(
-                        controller: _verticalController,
-                        thumbVisibility: true,
-                        child: SingleChildScrollView(
-                          controller: _verticalController,
-                          padding: const EdgeInsets.fromLTRB(8, 0, 8, 20),
-                          child: Scrollbar(
-                            controller: _horizontalController,
-                            thumbVisibility: true,
-                            notificationPredicate: (notification) =>
-                                notification.depth == 1,
-                            child: SingleChildScrollView(
-                              controller: _horizontalController,
-                              scrollDirection: Axis.horizontal,
-                              child: SizedBox(
-                                width: tableWidth,
-                                child: _CompactPlanTable(
-                                  viewModel: widget.viewModel,
-                                ),
-                              ),
-                            ),
-                          ),
+                    PopupMenuButton<String>(
+                      tooltip: '导出',
+                      icon: const Icon(Icons.download_outlined),
+                      onSelected: _export,
+                      itemBuilder: (context) => const [
+                        PopupMenuItem(
+                          value: 'Excel',
+                          child: Text('导出 Excel 兼容文件 (.xls)'),
                         ),
-                      ),
+                        PopupMenuItem(value: 'CSV', child: Text('导出 CSV')),
+                        PopupMenuItem(
+                          value: 'JSON',
+                          child: Text('导出 JSON（含参数）'),
+                        ),
+                      ],
                     ),
                   ],
-                );
-              },
+                ),
+              ),
+            if (_exportPath != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
+                child: SelectableText(
+                  '最近导出：$_exportPath',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
+              child: Text(
+                '横屏窗口会尽量一次显示完整行；实际提前还款在淡黄色单元格中录入。',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ),
-          ),
+            Expanded(
+              child: Scrollbar(
+                controller: _verticalController,
+                thumbVisibility: true,
+                child: SingleChildScrollView(
+                  controller: _verticalController,
+                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 20),
+                  child: Scrollbar(
+                    controller: _horizontalController,
+                    thumbVisibility: true,
+                    notificationPredicate: (notification) =>
+                        notification.depth == 1,
+                    child: SingleChildScrollView(
+                      controller: _horizontalController,
+                      scrollDirection: Axis.horizontal,
+                      child: SizedBox(
+                        width: tableWidth,
+                        child: _CompactPlanTable(viewModel: widget.viewModel),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         );
       },
     );

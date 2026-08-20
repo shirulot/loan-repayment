@@ -17,7 +17,6 @@ class LoanCalculator {
     var providentOpening = config.providentOpeningBalance;
     final calculationDate = currentDate ?? DateTime.now();
     var remainingTerms = config.remainingTermsAt(calculationDate);
-    var recurringPaymentBaseline = 0.0;
     final rows = <LoanPlanRow>[];
 
     // The limit is only a safety net for invalid configurations that cannot make progress.
@@ -47,18 +46,17 @@ class LoanCalculator {
       final commercialPayment = commercialPrincipal + commercialInterest;
       final providentPayment = providentPrincipal + providentInterest;
       final totalPayment = commercialPayment + providentPayment;
-      if (index == 3) {
-        // The first recurring month anchors the later automatic increase.
-        recurringPaymentBaseline = totalPayment;
-      }
-      final availableFunds = index < 3
-          ? config.monthlySalary
-          : config.recurringPrepaymentStart + recurringPaymentBaseline;
+      // Keep the cash-flow amount aligned with the editable fields shown on
+      // the first page: income - payment - living cost + extra income.
+      final availableFunds =
+          config.monthlySalary -
+          totalPayment -
+          config.monthlyLivingCost +
+          config.monthlyExtraIncome;
 
       final requestedPrepayment = _requestedPrepayment(
         index: index,
-        totalPayment: totalPayment,
-        recurringPaymentBaseline: recurringPaymentBaseline,
+        availableFunds: availableFunds,
         config: config,
       );
       final remainingAfterNormalPayment =
@@ -193,17 +191,37 @@ class LoanCalculator {
 
   double _requestedPrepayment({
     required int index,
-    required double totalPayment,
-    required double recurringPaymentBaseline,
+    required double availableFunds,
     required LoanPlanConfig config,
   }) {
-    if (index == 0) return config.fixedAugustPrepayment;
-    if (index == 1) return config.fixedSeptemberPrepayment;
-    if (index == 2) return config.fixedOctoberPrepayment;
-    return math.max(
-      0,
-      config.recurringPrepaymentStart + recurringPaymentBaseline - totalPayment,
-    );
+    if (index == 0) {
+      return _recentExpectedOrAvailable(
+        config.fixedAugustPrepayment,
+        availableFunds,
+      );
+    }
+    if (index == 1) {
+      return _recentExpectedOrAvailable(
+        config.fixedSeptemberPrepayment,
+        availableFunds,
+      );
+    }
+    if (index == 2) {
+      return _recentExpectedOrAvailable(
+        config.fixedOctoberPrepayment,
+        availableFunds,
+      );
+    }
+    // The available amount rises naturally as normal monthly payments decline.
+    return math.max(0, availableFunds);
+  }
+
+  /// A recent expected amount takes priority; empty and zero values use cash flow.
+  double _recentExpectedOrAvailable(
+    double expectedAmount,
+    double availableFunds,
+  ) {
+    return expectedAmount > 0 ? expectedAmount : math.max(0, availableFunds);
   }
 
   double _roundUpToTen(double value) {

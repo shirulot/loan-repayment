@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keep the same plan state during Android 12+ cloud backup and device transfer. -->
+<data-extraction-rules>
+    <cloud-backup disableIfNoEncryptionCapabilities="false">
+        <include domain="file" path="loan-repayment-plans/loan-plan-state.json" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="file" path="loan-repayment-plans/loan-plan-state.json" />
+    </device-transfer>
+</data-extraction-rules>

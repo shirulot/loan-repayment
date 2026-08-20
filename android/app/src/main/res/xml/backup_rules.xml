@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Back up only the user-entered loan plan state on Android 11 and below. -->
+<full-backup-content>
+    <include domain="file" path="loan-repayment-plans/loan-plan-state.json" />
+</full-backup-content>

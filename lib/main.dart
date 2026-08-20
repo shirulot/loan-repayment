@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'ui/features/loan/view_models/loan_planner_view_model.dart';
 import 'ui/features/loan/views/loan_plan_page.dart';
+import 'ui/theme/loan_palette.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,39 +30,70 @@ class _LoanRepaymentAppState extends State<LoanRepaymentApp> {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xff1f4e78);
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: LoanPalette.primary,
+      brightness: Brightness.light,
+      error: LoanPalette.repaymentAccent,
+    );
     return MaterialApp(
       title: '提前还贷计算器',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: seed,
-          brightness: Brightness.light,
+        colorScheme: colorScheme,
+        scaffoldBackgroundColor: colorScheme.surfaceContainerLowest,
+        appBarTheme: AppBarTheme(
+          centerTitle: false,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          backgroundColor: colorScheme.surfaceContainerLowest,
+          foregroundColor: colorScheme.onSurface,
+          titleTextStyle: const TextStyle(
+            fontSize: 19,
+            height: 1.2,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.2,
+          ),
         ),
-        scaffoldBackgroundColor: const Color(0xfff5f7fa),
-        cardTheme: const CardThemeData(
+        cardTheme: CardThemeData(
           elevation: 0,
           margin: EdgeInsets.zero,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.all(Radius.circular(12)),
-            side: BorderSide(color: Color(0xffd9e2f3)),
+            side: BorderSide(color: colorScheme.outlineVariant),
           ),
         ),
-        inputDecorationTheme: const InputDecorationTheme(
+        dividerTheme: DividerThemeData(
+          color: colorScheme.outlineVariant,
+          space: 1,
+          thickness: 1,
+        ),
+        inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: Colors.white,
+          fillColor: colorScheme.surface,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.all(Radius.circular(8)),
-            borderSide: BorderSide(color: Color(0xffc7d3e3)),
+            borderSide: BorderSide(color: colorScheme.outlineVariant),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.all(Radius.circular(8)),
-            borderSide: BorderSide(color: Color(0xffc7d3e3)),
+            borderSide: BorderSide(color: colorScheme.outlineVariant),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.all(Radius.circular(8)),
-            borderSide: BorderSide(color: seed, width: 2),
+            borderSide: BorderSide(color: colorScheme.primary, width: 2),
+          ),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            minimumSize: const Size.fromHeight(50),
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.all(Radius.circular(8)),
+            ),
+            textStyle: const TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       ),

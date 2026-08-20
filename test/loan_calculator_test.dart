@@ -40,23 +40,23 @@ void main() {
     }
   });
 
-  test('uses the editable recurring start for automatic prepayments', () {
-    final rows = calculator.calculate(config, {'2026-08': 17500});
-
-    expect(
-      rows[3].expectedPrepayment,
-      closeTo(config.recurringPrepaymentStart, 0.001),
-    );
-    expect(rows[4].expectedPrepayment, greaterThan(rows[3].expectedPrepayment));
-  });
-
   test(
-    'changing the recurring start changes the first automatic prepayment',
+    'uses and increases available funds after recent expected repayments',
     () {
-      final customConfig = config.copyWith(recurringPrepaymentStart: 12000);
-      final rows = calculator.calculate(customConfig, {'2026-08': 17500});
+      final rows = calculator.calculate(config, {'2026-08': 17500});
 
-      expect(rows[3].expectedPrepayment, closeTo(12000, 0.001));
+      expect(
+        rows[3].expectedPrepayment,
+        closeTo((rows[3].availableFunds / 10).ceilToDouble() * 10, 0.001),
+      );
+      expect(
+        rows[4].expectedPrepayment,
+        closeTo((rows[4].availableFunds / 10).ceilToDouble() * 10, 0.001),
+      );
+      expect(
+        rows[4].expectedPrepayment,
+        greaterThan(rows[3].expectedPrepayment),
+      );
     },
   );
 
@@ -70,6 +70,20 @@ void main() {
         closeTo(viewModel.rows[1].totalPayment, 0.001),
       );
       expect(viewModel.currentMonthlyPayment, greaterThan(0));
+      expect(
+        viewModel.currentAvailablePrepayment,
+        closeTo(
+          config.monthlySalary -
+              viewModel.currentMonthlyPayment -
+              config.monthlyLivingCost +
+              config.monthlyExtraIncome,
+          0.001,
+        ),
+      );
+      expect(
+        viewModel.currentAvailablePrepayment,
+        closeTo(viewModel.rows[1].availableFunds, 0.001),
+      );
       viewModel.dispose();
     },
   );
@@ -79,7 +93,7 @@ void main() {
       'loanStartDate': '2020-01-15',
       'loanTermYears': 20,
       'monthlySalary': 14000,
-      'recurringPrepaymentStart': 12000,
+      'monthlyExtraIncome': 800,
       'monthlyLivingCost': 3200,
       'remainingTerms': 180,
     });
@@ -87,7 +101,7 @@ void main() {
     expect(restored.loanStartDate, '2020-01-15');
     expect(restored.loanTermYears, 20);
     expect(restored.monthlySalary, 14000);
-    expect(restored.recurringPrepaymentStart, 12000);
+    expect(restored.monthlyExtraIncome, 800);
     expect(restored.monthlyLivingCost, 3200);
     expect(restored.remainingTerms, 180);
     expect(restored.commercialOpeningBalance, config.commercialOpeningBalance);
@@ -131,6 +145,37 @@ void main() {
     expect(formatLoanMoney(1000000), '1,000,000.00');
   });
 
+  test('extra income increases the available prepayment amount', () {
+    final extraIncomeConfig = config.copyWith(monthlyExtraIncome: 2500);
+    final rows = calculator.calculate(extraIncomeConfig, {});
+
+    expect(
+      rows[1].availableFunds,
+      closeTo(
+        extraIncomeConfig.monthlySalary -
+            rows[1].totalPayment -
+            extraIncomeConfig.monthlyLivingCost +
+            extraIncomeConfig.monthlyExtraIncome,
+        0.001,
+      ),
+    );
+  });
+
+  test('zero recent expected amounts fall back to available funds', () {
+    final fallbackConfig = config.copyWith(
+      fixedAugustPrepayment: 0,
+      fixedSeptemberPrepayment: 0,
+      fixedOctoberPrepayment: 0,
+    );
+    final rows = calculator.calculate(fallbackConfig, {});
+
+    expect(rows[0].expectedPrepayment, closeTo(rows[0].availableFunds, 0.001));
+    expect(
+      rows[1].expectedPrepayment,
+      closeTo((rows[1].availableFunds / 10).ceilToDouble() * 10, 0.001),
+    );
+  });
+
   test('continues generating months until the balance is cleared', () {
     const longPlanConfig = LoanPlanConfig(
       commercialOpeningBalance: 1000000,
@@ -161,7 +206,7 @@ void main() {
     expect(rows.single.totalBalance, closeTo(0, 0.001));
   });
 
-  test('uses the current month as the fixed repayment sequence start', () {
+  test('uses the current month as the recent expected repayment sequence start', () {
     final futureCalculator = LoanCalculator(currentDate: DateTime(2030, 3, 19));
     final rows = futureCalculator.calculate(config, {'2030-03': 17500});
 

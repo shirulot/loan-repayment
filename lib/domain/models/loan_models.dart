@@ -8,7 +8,7 @@ class LoanPlanConfig {
     this.loanStartDate = '',
     this.loanTermYears = 0,
     this.monthlySalary = 16500,
-    this.recurringPrepaymentStart = 16500,
+    this.monthlyExtraIncome = 0,
     this.monthlyLivingCost = 3300,
     this.fixedAugustPrepayment = 17000,
     this.fixedSeptemberPrepayment = 30000,
@@ -30,9 +30,7 @@ class LoanPlanConfig {
   /// Total loan duration in years; zero keeps legacy terms.
   final int loanTermYears;
   final double monthlySalary;
-
-  /// First automatic prepayment after the three fixed repayment months.
-  final double recurringPrepaymentStart;
+  final double monthlyExtraIncome;
   final double monthlyLivingCost;
   final double fixedAugustPrepayment;
   final double fixedSeptemberPrepayment;
@@ -78,9 +76,9 @@ class LoanPlanConfig {
           json['loanStartDate']?.toString() ?? defaults.loanStartDate,
       loanTermYears: integer('loanTermYears', defaults.loanTermYears),
       monthlySalary: number('monthlySalary', defaults.monthlySalary),
-      recurringPrepaymentStart: number(
-        'recurringPrepaymentStart',
-        defaults.recurringPrepaymentStart,
+      monthlyExtraIncome: number(
+        'monthlyExtraIncome',
+        defaults.monthlyExtraIncome,
       ),
       monthlyLivingCost: number(
         'monthlyLivingCost',
@@ -122,7 +120,7 @@ class LoanPlanConfig {
     String? loanStartDate,
     int? loanTermYears,
     double? monthlySalary,
-    double? recurringPrepaymentStart,
+    double? monthlyExtraIncome,
     double? monthlyLivingCost,
     double? fixedAugustPrepayment,
     double? fixedSeptemberPrepayment,
@@ -142,8 +140,7 @@ class LoanPlanConfig {
       loanStartDate: loanStartDate ?? this.loanStartDate,
       loanTermYears: loanTermYears ?? this.loanTermYears,
       monthlySalary: monthlySalary ?? this.monthlySalary,
-      recurringPrepaymentStart:
-          recurringPrepaymentStart ?? this.recurringPrepaymentStart,
+      monthlyExtraIncome: monthlyExtraIncome ?? this.monthlyExtraIncome,
       monthlyLivingCost: monthlyLivingCost ?? this.monthlyLivingCost,
       fixedAugustPrepayment:
           fixedAugustPrepayment ?? this.fixedAugustPrepayment,
@@ -169,7 +166,7 @@ class LoanPlanConfig {
       'loanStartDate': loanStartDate,
       'loanTermYears': loanTermYears,
       'monthlySalary': monthlySalary,
-      'recurringPrepaymentStart': recurringPrepaymentStart,
+      'monthlyExtraIncome': monthlyExtraIncome,
       'monthlyLivingCost': monthlyLivingCost,
       'fixedAugustPrepayment': fixedAugustPrepayment,
       'fixedSeptemberPrepayment': fixedSeptemberPrepayment,
@@ -254,6 +251,8 @@ class LoanPlanRow {
   final double? commercialReduction;
   final double? providentReduction;
   final double? totalReduction;
+
+  /// Income plus extra income after subtracting payment and living cost.
   final double availableFunds;
   final double expectedPrepayment;
   final double? actualPrepayment;

@@ -49,6 +49,15 @@ class LoanPlannerViewModel extends ChangeNotifier {
     return _rows.isEmpty ? 0 : _rows.first.totalPayment;
   }
 
+  /// Uses the same normal-payment row as [currentMonthlyPayment].
+  double get currentAvailablePrepayment {
+    if (_rows.length > 1) return _rows[1].availableFunds;
+    return _config.monthlySalary -
+        currentMonthlyPayment -
+        _config.monthlyLivingCost +
+        _config.monthlyExtraIncome;
+  }
+
   List<String> get fixedPrepaymentMonths =>
       List.unmodifiable(List<String>.generate(3, _calculator.monthAt));
 

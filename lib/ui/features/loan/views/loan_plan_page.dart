@@ -5,6 +5,7 @@ import '../../../../domain/models/loan_models.dart';
 import '../view_models/loan_planner_view_model.dart';
 import 'loan_plan_detail_page.dart';
 import 'loan_plan_formatters.dart';
+import 'loan_plan_mobile_layout.dart';
 
 class LoanPlanPage extends StatefulWidget {
   const LoanPlanPage({super.key, required this.viewModel});
@@ -17,15 +18,31 @@ class LoanPlanPage extends StatefulWidget {
 
 class _LoanPlanPageState extends State<LoanPlanPage> {
   final _parameterKey = GlobalKey<_ParameterCardState>();
+  var _mobileTabIndex = 0;
 
   LoanPlannerViewModel get viewModel => widget.viewModel;
 
   Future<void> _openDetails() async {
+    if (MediaQuery.sizeOf(context).width < 640) {
+      setState(() => _mobileTabIndex = 1);
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => LoanPlanDetailPage(viewModel: viewModel),
       ),
     );
+  }
+
+  void _selectMobileTab(int index) {
+    if (index <= 1) {
+      setState(() => _mobileTabIndex = index);
+      return;
+    }
+    const labels = ['首页', '还款计划', '记录', '我的'];
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('${labels[index]}将在后续版本开放。')));
   }
 
   void _reset() {
@@ -36,26 +53,80 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
     ).showSnackBar(const SnackBar(content: Text('已恢复当前模型的默认参数。')));
   }
 
+  void _showMobileInfo() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('使用说明', style: Theme.of(sheetContext).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              const Text('填写现金流和贷款参数后，计划会按实际还款记录自动滚动修正。'),
+              const SizedBox(height: 12),
+              TextButton.icon(
+                onPressed: () {
+                  Navigator.of(sheetContext).pop();
+                  _reset();
+                },
+                icon: const Icon(Icons.restart_alt_rounded),
+                label: const Text('恢复默认参数'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: viewModel,
       builder: (context, _) {
+        final isMobile = MediaQuery.sizeOf(context).width < 640;
         return Scaffold(
-          appBar: AppBar(
-            title: const Text('提前还贷计算器'),
-            actions: [
-              IconButton(
-                tooltip: '恢复默认参数',
-                onPressed: _reset,
-                icon: const Icon(Icons.restart_alt_rounded),
-              ),
-              const SizedBox(width: 8),
-            ],
-          ),
+          appBar: isMobile
+              ? null
+              : AppBar(
+                  titleSpacing: 20,
+                  title: const Text('提前还贷计算器'),
+                  actions: [
+                    IconButton(
+                      tooltip: '恢复默认参数',
+                      onPressed: _reset,
+                      icon: const Icon(Icons.restart_alt_rounded, size: 21),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ),
+          bottomNavigationBar: isMobile
+              ? _MobileNavigationBar(
+                  selectedIndex: _mobileTabIndex,
+                  onDestinationSelected: _selectMobileTab,
+                )
+              : null,
           body: SafeArea(
             child: LayoutBuilder(
               builder: (context, constraints) {
+                if (constraints.maxWidth < 640) {
+                  if (_mobileTabIndex == 1) {
+                    return LoanPlanDetailPage(
+                      viewModel: viewModel,
+                      embedded: true,
+                    );
+                  }
+                  return MobileLoanPlanLayout(
+                    viewModel: viewModel,
+                    config: viewModel.config,
+                    onViewDetails: _openDetails,
+                    onShowInfo: _showMobileInfo,
+                  );
+                }
                 final isWide = constraints.maxWidth >= 1080;
                 return SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
@@ -104,6 +175,63 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
           ),
         );
       },
+    );
+  }
+}
+
+class _MobileNavigationBar extends StatelessWidget {
+  const _MobileNavigationBar({
+    required this.selectedIndex,
+    required this.onDestinationSelected,
+  });
+
+  final int selectedIndex;
+  final ValueChanged<int> onDestinationSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return NavigationBarTheme(
+      data: NavigationBarThemeData(
+        height: 70,
+        backgroundColor: colors.surfaceContainerLowest,
+        indicatorColor: Colors.transparent,
+        labelTextStyle: WidgetStateProperty.resolveWith<TextStyle>((states) {
+          return Theme.of(context).textTheme.labelSmall!.copyWith(
+            color: states.contains(WidgetState.selected)
+                ? colors.primary
+                : colors.onSurfaceVariant,
+            fontWeight: FontWeight.w500,
+          );
+        }),
+        iconTheme: WidgetStateProperty.resolveWith<IconThemeData>((states) {
+          return IconThemeData(
+            color: states.contains(WidgetState.selected)
+                ? colors.primary
+                : colors.onSurfaceVariant,
+          );
+        }),
+      ),
+      child: NavigationBar(
+        selectedIndex: selectedIndex,
+        onDestinationSelected: onDestinationSelected,
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home),
+            label: '首页',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.pie_chart_outline),
+            label: '还款计划',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.article_outlined),
+            label: '记录',
+          ),
+          NavigationDestination(icon: Icon(Icons.person_outline), label: '我的'),
+        ],
+      ),
     );
   }
 }
@@ -355,8 +483,7 @@ class _ParameterCardState extends State<_ParameterCard> {
           ? '${config.loanTermYears}'
           : '',
       'monthlySalary': config.monthlySalary.toStringAsFixed(2),
-      'recurringPrepaymentStart': config.recurringPrepaymentStart
-          .toStringAsFixed(2),
+      'monthlyExtraIncome': config.monthlyExtraIncome.toStringAsFixed(2),
       'monthlyLivingCost': config.monthlyLivingCost.toStringAsFixed(2),
       'fixedAugustPrepayment': config.fixedAugustPrepayment.toStringAsFixed(2),
       'fixedSeptemberPrepayment': config.fixedSeptemberPrepayment
@@ -370,6 +497,8 @@ class _ParameterCardState extends State<_ParameterCard> {
   void _apply() {
     double number(String key, double fallback) =>
         double.tryParse(_controllers[key]?.text ?? '') ?? fallback;
+    double zeroIfBlank(String key) =>
+        double.tryParse(_controllers[key]?.text ?? '') ?? 0;
     final old = widget.viewModel.config;
     final loanStartDate = _controllers['loanStartDate']?.text.trim() ?? '';
     final loanTermYears =
@@ -402,23 +531,15 @@ class _ParameterCardState extends State<_ParameterCard> {
         loanStartDate: loanStartDate,
         loanTermYears: loanTermYears,
         monthlySalary: number('monthlySalary', old.monthlySalary),
-        recurringPrepaymentStart: number(
-          'recurringPrepaymentStart',
-          old.recurringPrepaymentStart,
+        monthlyExtraIncome: number(
+          'monthlyExtraIncome',
+          old.monthlyExtraIncome,
         ),
         monthlyLivingCost: number('monthlyLivingCost', old.monthlyLivingCost),
-        fixedAugustPrepayment: number(
-          'fixedAugustPrepayment',
-          old.fixedAugustPrepayment,
-        ),
-        fixedSeptemberPrepayment: number(
-          'fixedSeptemberPrepayment',
-          old.fixedSeptemberPrepayment,
-        ),
-        fixedOctoberPrepayment: number(
-          'fixedOctoberPrepayment',
-          old.fixedOctoberPrepayment,
-        ),
+        // Blank recent expected amounts intentionally fall back to cash flow.
+        fixedAugustPrepayment: zeroIfBlank('fixedAugustPrepayment'),
+        fixedSeptemberPrepayment: zeroIfBlank('fixedSeptemberPrepayment'),
+        fixedOctoberPrepayment: zeroIfBlank('fixedOctoberPrepayment'),
       ),
     );
     ScaffoldMessenger.of(
@@ -442,7 +563,7 @@ class _ParameterCardState extends State<_ParameterCard> {
             ),
             const SizedBox(height: 5),
             Text(
-              '填写贷款开始日期和总年限后，剩余期数会按当前月份自动计算；蓝色字段可编辑。前三个计划月份使用固定提前还款，之后从“递增起始值”开始自动增加。',
+              '填写贷款开始日期和总年限后，剩余期数会按当前月份自动计算；蓝色字段可编辑。近三个月优先使用期望还款额，留空或填 0 时按可供提前还贷额计算；第四个月起也按可供提前还贷额计算，月供下降时金额会自动递增。',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 13),
@@ -462,16 +583,21 @@ class _ParameterCardState extends State<_ParameterCard> {
             _field('公积金年利率', 'providentAnnualRate', suffix: '%'),
             const SizedBox(height: 8),
             _sectionLabel(context, '每月现金流'),
-            _field('月工资（记录）', 'monthlySalary', suffix: '元'),
-            _field('递增起始值', 'recurringPrepaymentStart', suffix: '元'),
+            _field('本月收入', 'monthlySalary', suffix: '元'),
+            _field('额外收入', 'monthlyExtraIncome', suffix: '元'),
             _calculatedField(
               '当月月供',
-              -widget.viewModel.currentMonthlyPayment,
+              widget.viewModel.currentMonthlyPayment,
               suffix: '元',
             ),
             _field('每月生活费（仅记录）', 'monthlyLivingCost', suffix: '元'),
+            _calculatedField(
+              '可供提前还贷额',
+              widget.viewModel.currentAvailablePrepayment,
+              suffix: '元',
+            ),
             const SizedBox(height: 8),
-            _sectionLabel(context, '固定提前还款'),
+            _sectionLabel(context, '近期期望还款额'),
             _field(
               _displayMonth(widget.viewModel.fixedPrepaymentMonths[0]),
               'fixedAugustPrepayment',
