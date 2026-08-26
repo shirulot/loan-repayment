@@ -10,23 +10,28 @@ class LoanPlannerViewModel extends ChangeNotifier {
   LoanPlannerViewModel({
     LoanCalculator? calculator,
     LoanCacheService? cacheService,
+    LoanPlanConfig initialConfig = const LoanPlanConfig(),
   }) : _calculator = calculator ?? const LoanCalculator(),
-       _cacheService = cacheService ?? const LoanCacheService() {
-    _actualPrepayments[_calculator.startMonth] = 17500;
+       _cacheService = cacheService ?? const LoanCacheService(),
+       _config = initialConfig {
     _recalculate();
   }
 
   final LoanCalculator _calculator;
   final LoanCacheService _cacheService;
-  LoanPlanConfig _config = const LoanPlanConfig();
+  LoanPlanConfig _config;
   final Map<String, double?> _actualPrepayments = <String, double?>{};
   List<LoanPlanRow> _rows = const <LoanPlanRow>[];
   Future<void> _pendingSave = Future<void>.value();
+  bool _amountsMasked = false;
 
   LoanPlanConfig get config => _config;
   List<LoanPlanRow> get rows => List.unmodifiable(_rows);
   Map<String, double?> get actualPrepayments =>
       Map.unmodifiable(_actualPrepayments);
+
+  /// 仅用于当前界面展示，避免将隐私显示偏好写入贷款数据缓存。
+  bool get amountsMasked => _amountsMasked;
 
   int get calculatedRemainingTerms =>
       _config.remainingTermsAt(_calculator.currentDate ?? DateTime.now());
@@ -42,8 +47,7 @@ class LoanPlannerViewModel extends ChangeNotifier {
   int get actualOverrideCount =>
       _actualPrepayments.values.where((value) => value != null).length;
 
-  /// The first row is a balance-calibration month and has no normal payment.
-  /// Use the first following row for the monthly cash-flow display.
+  /// 首行是余额校准月，当前月供展示紧随其后的银行实扣月供。
   double get currentMonthlyPayment {
     if (_rows.length > 1) return _rows[1].totalPayment;
     return _rows.isEmpty ? 0 : _rows.first.totalPayment;
@@ -93,13 +97,20 @@ class LoanPlannerViewModel extends ChangeNotifier {
     _persist();
   }
 
-  void reset() {
-    _config = const LoanPlanConfig();
+  /// Applies a user-selected backup and persists it as the new local state.
+  void restoreImportedState(LoanCachedState state) {
+    _config = state.config;
     _actualPrepayments
       ..clear()
-      ..[_calculator.startMonth] = 17500;
+      ..addAll(state.actualPrepayments);
     _recalculate();
     _persist();
+  }
+
+  /// 在首页与计划详情间共享金额脱敏状态。
+  void toggleAmountsMasked() {
+    _amountsMasked = !_amountsMasked;
+    notifyListeners();
   }
 
   void _recalculate() {

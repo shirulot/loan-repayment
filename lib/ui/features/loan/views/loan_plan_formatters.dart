@@ -23,3 +23,15 @@ String formatLoanMoney(double value) {
 
 String formatLoanMoneyOrDash(double? value) =>
     value == null || value.abs() < 0.005 ? '—' : formatLoanMoney(value);
+
+/// Masks monetary content without changing the underlying calculation value.
+String formatLoanMoneyProtected(
+  double? value, {
+  required bool masked,
+  bool dashWhenEmpty = false,
+}) {
+  if (masked) return '****';
+  return dashWhenEmpty
+      ? formatLoanMoneyOrDash(value)
+      : formatLoanMoney(value ?? 0);
+}

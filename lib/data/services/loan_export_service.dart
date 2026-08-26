@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
+import 'loan_cache_service.dart';
 import '../../domain/models/loan_models.dart';
 
 class ExportedLoanFile {
@@ -34,12 +35,16 @@ class LoanExportService {
   Future<ExportedLoanFile> exportJson(
     LoanPlanConfig config,
     List<LoanPlanRow> rows,
+    Map<String, double?> actualPrepayments,
   ) async {
-    final payload = <String, Object?>{
-      'config': config.toJson(),
-      'rows': rows.map(_rowToJson).toList(),
-      'exportedAt': DateTime.now().toIso8601String(),
-    };
+    final payload =
+        LoanCachedState(
+          config: config,
+          actualPrepayments: actualPrepayments,
+        ).toJson()..addAll(<String, Object?>{
+          'rows': rows.map(_rowToJson).toList(),
+          'exportedAt': DateTime.now().toIso8601String(),
+        });
     return _save(
       'loan-repayment-plan.json',
       const JsonEncoder.withIndent('  ').convert(payload),
@@ -73,7 +78,11 @@ class LoanExportService {
         '本月月供总额',
         '总减少额',
         '预期提前还款',
+        '还贷日期',
         '实际提前还款',
+        '当日提前利息',
+        '下月基础月供',
+        '基础月供减少额',
         '差额',
         '商贷余额',
         '公积金余额',
@@ -89,7 +98,11 @@ class LoanExportService {
           row.totalPayment,
           row.totalReduction,
           row.expectedPrepayment,
+          row.effectivePrepaymentDate ?? '',
           row.actualPrepayment ?? '',
+          row.prepaymentInterestDueNow,
+          row.nextMonthBasePayment,
+          row.nextMonthBasePaymentReduction ?? '',
           row.difference ?? '',
           row.commercialClosing,
           row.providentClosing,
@@ -110,7 +123,11 @@ class LoanExportService {
       '本月月供总额',
       '总减少额',
       '预期提前还款',
+      '还贷日期',
       '实际提前还款',
+      '当日提前利息',
+      '下月基础月供',
+      '基础月供减少额',
       '差额',
       '商贷余额',
       '公积金余额',
@@ -126,7 +143,11 @@ class LoanExportService {
         row.totalPayment,
         row.totalReduction,
         row.expectedPrepayment,
+        row.effectivePrepaymentDate ?? '',
         row.actualPrepayment ?? '',
+        row.prepaymentInterestDueNow,
+        row.nextMonthBasePayment,
+        row.nextMonthBasePaymentReduction ?? '',
         row.difference ?? '',
         row.commercialClosing,
         row.providentClosing,
@@ -157,6 +178,11 @@ td{padding:6px;border:1px solid #d9e2f3;text-align:right} td:first-child{text-al
       'totalReduction': row.totalReduction,
       'expectedPrepayment': row.expectedPrepayment,
       'actualPrepayment': row.actualPrepayment,
+      'plannedPrepaymentDate': row.plannedPrepaymentDate,
+      'effectivePrepaymentDate': row.effectivePrepaymentDate,
+      'prepaymentInterestDueNow': row.prepaymentInterestDueNow,
+      'nextMonthBasePayment': row.nextMonthBasePayment,
+      'nextMonthBasePaymentReduction': row.nextMonthBasePaymentReduction,
       'difference': row.difference,
       'commercialBalance': row.commercialClosing,
       'providentBalance': row.providentClosing,

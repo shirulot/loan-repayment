@@ -14,6 +14,35 @@ class LoanCachedState {
 
   final LoanPlanConfig config;
   final Map<String, double?> actualPrepayments;
+
+  /// Parses both cache files and JSON backups exported by this application.
+  factory LoanCachedState.fromJson(Map<dynamic, dynamic> json) {
+    final configJson = json['config'];
+    if (configJson is! Map) {
+      throw const FormatException('缺少贷款参数。');
+    }
+
+    final actualPrepayments = <String, double?>{};
+    final actualJson = json['actualPrepayments'];
+    if (actualJson is Map) {
+      for (final entry in actualJson.entries) {
+        if (entry.key is String && entry.value is num) {
+          actualPrepayments[entry.key as String] = (entry.value as num)
+              .toDouble();
+        }
+      }
+    }
+    return LoanCachedState(
+      config: LoanPlanConfig.fromJson(Map<String, dynamic>.from(configJson)),
+      actualPrepayments: actualPrepayments,
+    );
+  }
+
+  /// Keeps export and cache formats aligned for reliable backup restoration.
+  Map<String, Object?> toJson() => <String, Object?>{
+    'config': config.toJson(),
+    'actualPrepayments': actualPrepayments,
+  };
 }
 
 /// Stores the editable plan state separately from exported plan files.
@@ -31,24 +60,7 @@ class LoanCacheService {
       final decoded = jsonDecode(await file.readAsString());
       if (decoded is! Map) return null;
 
-      final configJson = decoded['config'];
-      if (configJson is! Map) return null;
-
-      final actualJson = decoded['actualPrepayments'];
-      final actualPrepayments = <String, double?>{};
-      if (actualJson is Map) {
-        for (final entry in actualJson.entries) {
-          if (entry.key is String && entry.value is num) {
-            actualPrepayments[entry.key as String] = (entry.value as num)
-                .toDouble();
-          }
-        }
-      }
-
-      return LoanCachedState(
-        config: LoanPlanConfig.fromJson(Map<String, dynamic>.from(configJson)),
-        actualPrepayments: actualPrepayments,
-      );
+      return LoanCachedState.fromJson(decoded);
     } on FileSystemException {
       return null;
     } on FormatException {
@@ -63,10 +75,10 @@ class LoanCacheService {
     Map<String, double?> actualPrepayments,
   ) async {
     final file = await _stateFile();
-    final payload = <String, Object?>{
-      'config': config.toJson(),
-      'actualPrepayments': actualPrepayments,
-    };
+    final payload = LoanCachedState(
+      config: config,
+      actualPrepayments: actualPrepayments,
+    ).toJson();
     await file.writeAsString(
       const JsonEncoder.withIndent('  ').convert(payload),
     );

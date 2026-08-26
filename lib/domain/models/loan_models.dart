@@ -1,21 +1,24 @@
 class LoanPlanConfig {
   const LoanPlanConfig({
-    this.commercialOpeningBalance = 375409.31,
-    this.providentOpeningBalance = 500000,
-    this.commercialAnnualRate = 0.032,
-    this.providentAnnualRate = 0.026,
+    this.commercialOpeningBalance = 0,
+    this.providentOpeningBalance = 0,
+    this.commercialAnnualRate = 0,
+    this.providentAnnualRate = 0,
     this.remainingTerms = 200,
     this.loanStartDate = '',
     this.loanTermYears = 0,
-    this.monthlySalary = 16500,
+    this.monthlySalary = 0,
     this.monthlyExtraIncome = 0,
-    this.monthlyLivingCost = 3300,
-    this.fixedAugustPrepayment = 17000,
-    this.fixedSeptemberPrepayment = 30000,
-    this.fixedOctoberPrepayment = 7000,
-    this.bankSeptemberPrincipal = 1789.55,
-    this.bankSeptemberInterest = 986.24,
-    this.bankSeptemberPayment = 2775.79,
+    this.monthlyLivingCost = 0,
+    this.fixedAugustPrepayment = 0,
+    this.fixedSeptemberPrepayment = 0,
+    this.fixedOctoberPrepayment = 0,
+    this.fixedAugustPrepaymentDate = '',
+    this.fixedSeptemberPrepaymentDate = '',
+    this.fixedOctoberPrepaymentDate = '',
+    this.bankSeptemberPrincipal = 0,
+    this.bankSeptemberInterest = 0,
+    this.bankSeptemberPayment = 0,
   });
 
   final double commercialOpeningBalance;
@@ -35,6 +38,9 @@ class LoanPlanConfig {
   final double fixedAugustPrepayment;
   final double fixedSeptemberPrepayment;
   final double fixedOctoberPrepayment;
+  final String fixedAugustPrepaymentDate;
+  final String fixedSeptemberPrepaymentDate;
+  final String fixedOctoberPrepaymentDate;
   final double bankSeptemberPrincipal;
   final double bankSeptemberInterest;
   final double bankSeptemberPayment;
@@ -96,6 +102,15 @@ class LoanPlanConfig {
         'fixedOctoberPrepayment',
         defaults.fixedOctoberPrepayment,
       ),
+      fixedAugustPrepaymentDate:
+          json['fixedAugustPrepaymentDate']?.toString() ??
+          defaults.fixedAugustPrepaymentDate,
+      fixedSeptemberPrepaymentDate:
+          json['fixedSeptemberPrepaymentDate']?.toString() ??
+          defaults.fixedSeptemberPrepaymentDate,
+      fixedOctoberPrepaymentDate:
+          json['fixedOctoberPrepaymentDate']?.toString() ??
+          defaults.fixedOctoberPrepaymentDate,
       bankSeptemberPrincipal: number(
         'bankSeptemberPrincipal',
         defaults.bankSeptemberPrincipal,
@@ -125,6 +140,9 @@ class LoanPlanConfig {
     double? fixedAugustPrepayment,
     double? fixedSeptemberPrepayment,
     double? fixedOctoberPrepayment,
+    String? fixedAugustPrepaymentDate,
+    String? fixedSeptemberPrepaymentDate,
+    String? fixedOctoberPrepaymentDate,
     double? bankSeptemberPrincipal,
     double? bankSeptemberInterest,
     double? bankSeptemberPayment,
@@ -148,6 +166,12 @@ class LoanPlanConfig {
           fixedSeptemberPrepayment ?? this.fixedSeptemberPrepayment,
       fixedOctoberPrepayment:
           fixedOctoberPrepayment ?? this.fixedOctoberPrepayment,
+      fixedAugustPrepaymentDate:
+          fixedAugustPrepaymentDate ?? this.fixedAugustPrepaymentDate,
+      fixedSeptemberPrepaymentDate:
+          fixedSeptemberPrepaymentDate ?? this.fixedSeptemberPrepaymentDate,
+      fixedOctoberPrepaymentDate:
+          fixedOctoberPrepaymentDate ?? this.fixedOctoberPrepaymentDate,
       bankSeptemberPrincipal:
           bankSeptemberPrincipal ?? this.bankSeptemberPrincipal,
       bankSeptemberInterest:
@@ -171,6 +195,9 @@ class LoanPlanConfig {
       'fixedAugustPrepayment': fixedAugustPrepayment,
       'fixedSeptemberPrepayment': fixedSeptemberPrepayment,
       'fixedOctoberPrepayment': fixedOctoberPrepayment,
+      'fixedAugustPrepaymentDate': fixedAugustPrepaymentDate,
+      'fixedSeptemberPrepaymentDate': fixedSeptemberPrepaymentDate,
+      'fixedOctoberPrepaymentDate': fixedOctoberPrepaymentDate,
       'bankSeptemberPrincipal': bankSeptemberPrincipal,
       'bankSeptemberInterest': bankSeptemberInterest,
       'bankSeptemberPayment': bankSeptemberPayment,
@@ -230,6 +257,11 @@ class LoanPlanRow {
     required this.availableFunds,
     required this.expectedPrepayment,
     required this.actualPrepayment,
+    required this.plannedPrepaymentDate,
+    required this.effectivePrepaymentDate,
+    required this.prepaymentInterestDueNow,
+    required this.nextMonthBasePayment,
+    required this.nextMonthBasePaymentReduction,
     required this.usedPrepayment,
     required this.commercialPrepayment,
     required this.providentPrepayment,
@@ -256,6 +288,21 @@ class LoanPlanRow {
   final double availableFunds;
   final double expectedPrepayment;
   final double? actualPrepayment;
+
+  /// 首页填写的单一还贷日期，同时用于计划展示与利息结转。
+  final String? plannedPrepaymentDate;
+
+  /// 与 [plannedPrepaymentDate] 保持一致，供导出和详情表直接使用。
+  final String? effectivePrepaymentDate;
+
+  /// 提前还款日当天应付的利息，不计入用户输入的提前本金。
+  final double prepaymentInterestDueNow;
+
+  /// 下一个月不含本次结转利息的基础月供。
+  final double nextMonthBasePayment;
+
+  /// 仅比较相邻基础月供得出的降低额，不受结转利息影响。
+  final double? nextMonthBasePaymentReduction;
   final double usedPrepayment;
   final double commercialPrepayment;
   final double providentPrepayment;

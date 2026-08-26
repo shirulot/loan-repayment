@@ -17,40 +17,47 @@ class LoanPlanPage extends StatefulWidget {
 }
 
 class _LoanPlanPageState extends State<LoanPlanPage> {
-  final _parameterKey = GlobalKey<_ParameterCardState>();
   var _mobileTabIndex = 0;
+  String? _pendingDetailMonth;
 
   LoanPlannerViewModel get viewModel => widget.viewModel;
 
   Future<void> _openDetails() async {
+    await _openDetailsAtMonth();
+  }
+
+  Future<void> _openDetailsForMonth(String month) async {
+    await _openDetailsAtMonth(month);
+  }
+
+  Future<void> _openDetailsAtMonth([String? month]) async {
     if (MediaQuery.sizeOf(context).width < 640) {
-      setState(() => _mobileTabIndex = 1);
+      setState(() {
+        _mobileTabIndex = 1;
+        _pendingDetailMonth = month;
+      });
       return;
     }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => LoanPlanDetailPage(viewModel: viewModel),
+        builder: (_) =>
+            LoanPlanDetailPage(viewModel: viewModel, initialMonth: month),
       ),
     );
   }
 
   void _selectMobileTab(int index) {
     if (index <= 1) {
-      setState(() => _mobileTabIndex = index);
+      setState(() {
+        _mobileTabIndex = index;
+        _pendingDetailMonth = null;
+      });
       return;
     }
     const labels = ['首页', '还款计划', '记录', '我的'];
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('${labels[index]}将在后续版本开放。')));
-  }
-
-  void _reset() {
-    viewModel.reset();
-    _parameterKey.currentState?.syncFromConfig();
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('已恢复当前模型的默认参数。')));
   }
 
   void _showMobileInfo() {
@@ -67,15 +74,6 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
               Text('使用说明', style: Theme.of(sheetContext).textTheme.titleMedium),
               const SizedBox(height: 8),
               const Text('填写现金流和贷款参数后，计划会按实际还款记录自动滚动修正。'),
-              const SizedBox(height: 12),
-              TextButton.icon(
-                onPressed: () {
-                  Navigator.of(sheetContext).pop();
-                  _reset();
-                },
-                icon: const Icon(Icons.restart_alt_rounded),
-                label: const Text('恢复默认参数'),
-              ),
             ],
           ),
         ),
@@ -97,9 +95,13 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
                   title: const Text('提前还贷计算器'),
                   actions: [
                     IconButton(
-                      tooltip: '恢复默认参数',
-                      onPressed: _reset,
-                      icon: const Icon(Icons.restart_alt_rounded, size: 21),
+                      tooltip: viewModel.amountsMasked ? '显示金额' : '隐藏金额',
+                      onPressed: viewModel.toggleAmountsMasked,
+                      icon: Icon(
+                        viewModel.amountsMasked
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                      ),
                     ),
                     const SizedBox(width: 8),
                   ],
@@ -118,12 +120,14 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
                     return LoanPlanDetailPage(
                       viewModel: viewModel,
                       embedded: true,
+                      initialMonth: _pendingDetailMonth,
                     );
                   }
                   return MobileLoanPlanLayout(
                     viewModel: viewModel,
                     config: viewModel.config,
                     onViewDetails: _openDetails,
+                    onViewMonth: _openDetailsForMonth,
                     onShowInfo: _showMobileInfo,
                   );
                 }
@@ -146,10 +150,7 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
                               children: [
                                 SizedBox(
                                   width: 350,
-                                  child: _ParameterCard(
-                                    key: _parameterKey,
-                                    viewModel: viewModel,
-                                  ),
+                                  child: _ParameterCard(viewModel: viewModel),
                                 ),
                                 const SizedBox(width: 20),
                                 Expanded(
@@ -158,10 +159,7 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
                               ],
                             )
                           else ...[
-                            _ParameterCard(
-                              key: _parameterKey,
-                              viewModel: viewModel,
-                            ),
+                            _ParameterCard(viewModel: viewModel),
                             const SizedBox(height: 20),
                             _PlanCard(onViewDetails: _openDetails),
                           ],
@@ -271,7 +269,7 @@ class _IntroBanner extends StatelessWidget {
                   ),
                   const SizedBox(height: 5),
                   Text(
-                    '${_displayMonth(fixedMonths[0])} 为余额校准月；商贷 ${_displayMonth(fixedMonths[1])} 使用银行账单校准值。预计结清：${_finishMonth(rows)}。实际提前还款输入框以淡黄色标出。',
+                    '${_displayMonth(fixedMonths[0])} 为余额校准月；当前月供含银行结转息，转息前月供单独展示。预计结清：${_finishMonth(rows)}。',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: Theme.of(context).colorScheme.onPrimaryContainer,
                     ),
@@ -307,22 +305,23 @@ class _SummaryStrip extends StatelessWidget {
     final rows = viewModel.rows;
     final current = rows.first;
     final next = rows.length > 1 ? rows[1] : current;
+    String amount(double value) =>
+        formatLoanMoneyProtected(value, masked: viewModel.amountsMasked);
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 760;
         final cards = [
           _MetricCard(
             label: '当前总余额',
-            value: formatLoanMoney(current.totalBalance),
+            value: amount(current.totalBalance),
             detail:
-                '商贷 ${formatLoanMoney(current.commercialClosing)} · 公积金 ${formatLoanMoney(current.providentClosing)}',
+                '商贷 ${amount(current.commercialClosing)} · 公积金 ${amount(current.providentClosing)}',
             icon: Icons.savings_outlined,
           ),
           _MetricCard(
             label: '下月正常月供',
-            value: formatLoanMoney(next.totalPayment),
-            detail:
-                '${next.month} · 商贷 ${formatLoanMoney(next.commercialPayment)}',
+            value: amount(next.totalPayment),
+            detail: '${next.month} · 商贷 ${amount(next.commercialPayment)}',
             icon: Icons.calendar_month_outlined,
           ),
           _MetricCard(
@@ -428,7 +427,7 @@ class _MetricCard extends StatelessWidget {
 }
 
 class _ParameterCard extends StatefulWidget {
-  const _ParameterCard({super.key, required this.viewModel});
+  const _ParameterCard({required this.viewModel});
 
   final LoanPlannerViewModel viewModel;
 
@@ -467,30 +466,30 @@ class _ParameterCardState extends State<_ParameterCard> {
   }
 
   Map<String, String> _values(LoanPlanConfig config) {
+    String editableNumber(double value) =>
+        value == 0 ? '' : value.toStringAsFixed(2);
     return {
-      'commercialOpeningBalance': config.commercialOpeningBalance
-          .toStringAsFixed(2),
-      'providentOpeningBalance': config.providentOpeningBalance.toStringAsFixed(
-        2,
+      'commercialOpeningBalance': editableNumber(
+        config.commercialOpeningBalance,
       ),
-      'commercialAnnualRate': (config.commercialAnnualRate * 100)
-          .toStringAsFixed(2),
-      'providentAnnualRate': (config.providentAnnualRate * 100).toStringAsFixed(
-        2,
-      ),
+      'providentOpeningBalance': editableNumber(config.providentOpeningBalance),
+      'commercialAnnualRate': editableNumber(config.commercialAnnualRate * 100),
+      'providentAnnualRate': editableNumber(config.providentAnnualRate * 100),
       'loanStartDate': config.loanStartDate,
       'loanTermYears': config.loanTermYears > 0
           ? '${config.loanTermYears}'
           : '',
-      'monthlySalary': config.monthlySalary.toStringAsFixed(2),
-      'monthlyExtraIncome': config.monthlyExtraIncome.toStringAsFixed(2),
-      'monthlyLivingCost': config.monthlyLivingCost.toStringAsFixed(2),
-      'fixedAugustPrepayment': config.fixedAugustPrepayment.toStringAsFixed(2),
-      'fixedSeptemberPrepayment': config.fixedSeptemberPrepayment
-          .toStringAsFixed(2),
-      'fixedOctoberPrepayment': config.fixedOctoberPrepayment.toStringAsFixed(
-        2,
+      'monthlySalary': editableNumber(config.monthlySalary),
+      'monthlyExtraIncome': editableNumber(config.monthlyExtraIncome),
+      'monthlyLivingCost': editableNumber(config.monthlyLivingCost),
+      'fixedAugustPrepayment': editableNumber(config.fixedAugustPrepayment),
+      'fixedSeptemberPrepayment': editableNumber(
+        config.fixedSeptemberPrepayment,
       ),
+      'fixedOctoberPrepayment': editableNumber(config.fixedOctoberPrepayment),
+      'fixedAugustPrepaymentDate': config.fixedAugustPrepaymentDate,
+      'fixedSeptemberPrepaymentDate': config.fixedSeptemberPrepaymentDate,
+      'fixedOctoberPrepaymentDate': config.fixedOctoberPrepaymentDate,
     };
   }
 
@@ -513,6 +512,7 @@ class _ParameterCardState extends State<_ParameterCard> {
       ).showSnackBar(const SnackBar(content: Text('请同时填写有效的贷款开始日期和总年限。')));
       return;
     }
+    if (!_hasValidRecentPrepaymentDates()) return;
     widget.viewModel.updateConfig(
       old.copyWith(
         commercialOpeningBalance: number(
@@ -540,11 +540,43 @@ class _ParameterCardState extends State<_ParameterCard> {
         fixedAugustPrepayment: zeroIfBlank('fixedAugustPrepayment'),
         fixedSeptemberPrepayment: zeroIfBlank('fixedSeptemberPrepayment'),
         fixedOctoberPrepayment: zeroIfBlank('fixedOctoberPrepayment'),
+        fixedAugustPrepaymentDate:
+            _controllers['fixedAugustPrepaymentDate']?.text.trim() ?? '',
+        fixedSeptemberPrepaymentDate:
+            _controllers['fixedSeptemberPrepaymentDate']?.text.trim() ?? '',
+        fixedOctoberPrepaymentDate:
+            _controllers['fixedOctoberPrepaymentDate']?.text.trim() ?? '',
       ),
     );
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('参数已应用，计划已重算。')));
+  }
+
+  bool _hasValidRecentPrepaymentDates() {
+    final dateKeys = [
+      'fixedAugustPrepaymentDate',
+      'fixedSeptemberPrepaymentDate',
+      'fixedOctoberPrepaymentDate',
+    ];
+    for (var index = 0; index < dateKeys.length; index++) {
+      final value = _controllers[dateKeys[index]]?.text.trim() ?? '';
+      if (value.isEmpty) continue;
+      final date = LoanPlanConfig.parseLoanStartDate(value);
+      final expectedMonth = widget.viewModel.fixedPrepaymentMonths[index];
+      final actualMonth = date == null
+          ? ''
+          : '${date.year}-${date.month.toString().padLeft(2, '0')}';
+      if (actualMonth != expectedMonth) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('请填写 ${_displayMonth(expectedMonth)} 内有效的还贷日期。'),
+          ),
+        );
+        return false;
+      }
+    }
+    return true;
   }
 
   @override
@@ -604,14 +636,41 @@ class _ParameterCardState extends State<_ParameterCard> {
               suffix: '元',
             ),
             _field(
+              '${_displayMonth(widget.viewModel.fixedPrepaymentMonths[0])} 还贷日期',
+              'fixedAugustPrepaymentDate',
+              suffix: _repaymentStatus(
+                widget.viewModel.fixedPrepaymentMonths[0],
+              ),
+              date: true,
+              enabled: !_isSettled(widget.viewModel.fixedPrepaymentMonths[0]),
+            ),
+            _field(
               _displayMonth(widget.viewModel.fixedPrepaymentMonths[1]),
               'fixedSeptemberPrepayment',
               suffix: '元',
             ),
             _field(
+              '${_displayMonth(widget.viewModel.fixedPrepaymentMonths[1])} 还贷日期',
+              'fixedSeptemberPrepaymentDate',
+              suffix: _repaymentStatus(
+                widget.viewModel.fixedPrepaymentMonths[1],
+              ),
+              date: true,
+              enabled: !_isSettled(widget.viewModel.fixedPrepaymentMonths[1]),
+            ),
+            _field(
               _displayMonth(widget.viewModel.fixedPrepaymentMonths[2]),
               'fixedOctoberPrepayment',
               suffix: '元',
+            ),
+            _field(
+              '${_displayMonth(widget.viewModel.fixedPrepaymentMonths[2])} 还贷日期',
+              'fixedOctoberPrepaymentDate',
+              suffix: _repaymentStatus(
+                widget.viewModel.fixedPrepaymentMonths[2],
+              ),
+              date: true,
+              enabled: !_isSettled(widget.viewModel.fixedPrepaymentMonths[2]),
             ),
             const SizedBox(height: 12),
             FilledButton.icon(
@@ -636,11 +695,19 @@ class _ParameterCardState extends State<_ParameterCard> {
     required String suffix,
     bool integer = false,
     bool date = false,
+    bool enabled = true,
   }) {
+    final fieldEnabled =
+        enabled && !(suffix == '元' && widget.viewModel.amountsMasked);
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: TextField(
         controller: _controllers[key],
+        enabled: fieldEnabled,
+        readOnly: date,
+        onTap: date && fieldEnabled ? () => _pickRepaymentDate(key) : null,
+        obscureText: suffix == '元' && widget.viewModel.amountsMasked,
+        obscuringCharacter: '*',
         style: const TextStyle(color: Color(0xff0b5cad)),
         keyboardType: date
             ? TextInputType.datetime
@@ -660,10 +727,67 @@ class _ParameterCardState extends State<_ParameterCard> {
           labelText: label,
           suffixText: suffix,
           hintText: date ? '例如 2020-01 或 2020-01-15' : null,
+          suffixIcon: date
+              ? IconButton(
+                  tooltip: '选择还贷日期',
+                  onPressed: fieldEnabled
+                      ? () => _pickRepaymentDate(key)
+                      : null,
+                  icon: const Icon(Icons.calendar_month_outlined),
+                )
+              : null,
           isDense: true,
         ),
       ),
     );
+  }
+
+  /// 已录入实际提前金额的月份不再允许改动其还贷日期。
+  bool _isSettled(String month) =>
+      widget.viewModel.actualPrepayments[month] != null;
+
+  String _repaymentStatus(String month) => _isSettled(month) ? '已结清' : '预定日期';
+
+  /// 仅允许在当前近三期对应月份内选择，避免日期与计划行错位。
+  Future<void> _pickRepaymentDate(String key) async {
+    final month = _expectedMonthForDateKey(key);
+    if (month == null) return;
+    final parts = month.split('-');
+    final year = int.parse(parts[0]);
+    final monthNumber = int.parse(parts[1]);
+    final firstDate = DateTime(year, monthNumber);
+    final lastDate = DateTime(year, monthNumber + 1, 0);
+    final parsed = LoanPlanConfig.parseLoanStartDate(
+      _controllers[key]?.text ?? '',
+    );
+    final initialDate =
+        parsed != null &&
+            !parsed.isBefore(firstDate) &&
+            !parsed.isAfter(lastDate)
+        ? parsed
+        : firstDate;
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: firstDate,
+      lastDate: lastDate,
+      helpText: '选择还贷日期',
+      cancelText: '取消',
+      confirmText: '确定',
+    );
+    if (selected == null || !mounted) return;
+    _controllers[key]?.text =
+        '${selected.year}-${selected.month.toString().padLeft(2, '0')}-${selected.day.toString().padLeft(2, '0')}';
+  }
+
+  String? _expectedMonthForDateKey(String key) {
+    return switch (key) {
+      'fixedAugustPrepaymentDate' => widget.viewModel.fixedPrepaymentMonths[0],
+      'fixedSeptemberPrepaymentDate' =>
+        widget.viewModel.fixedPrepaymentMonths[1],
+      'fixedOctoberPrepaymentDate' => widget.viewModel.fixedPrepaymentMonths[2],
+      _ => null,
+    };
   }
 
   Widget _calculatedField(
@@ -680,7 +804,10 @@ class _ParameterCardState extends State<_ParameterCard> {
           isDense: true,
         ),
         child: Text(
-          formatLoanMoney(value),
+          formatLoanMoneyProtected(
+            value,
+            masked: widget.viewModel.amountsMasked,
+          ),
           style: TextStyle(
             color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),

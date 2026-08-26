@@ -86,7 +86,9 @@ class _LoanRepaymentAppState extends State<LoanRepaymentApp> {
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
-            minimumSize: const Size.fromHeight(50),
+            // Size.fromHeight uses an infinite width, which is invalid for
+            // buttons laid out as non-flex children inside a Row.
+            minimumSize: const Size(0, 50),
             shape: const RoundedRectangleBorder(
               borderRadius: BorderRadius.all(Radius.circular(8)),
             ),
