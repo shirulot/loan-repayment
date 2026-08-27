@@ -438,6 +438,8 @@ class _ParameterCard extends StatefulWidget {
 class _ParameterCardState extends State<_ParameterCard> {
   final Map<String, TextEditingController> _controllers =
       <String, TextEditingController>{};
+  // Keeps any future config synchronization from disturbing active edits.
+  final Map<String, FocusNode> _focusNodes = <String, FocusNode>{};
 
   @override
   void initState() {
@@ -450,8 +452,14 @@ class _ParameterCardState extends State<_ParameterCard> {
     for (final controller in _controllers.values) {
       controller.dispose();
     }
+    for (final focusNode in _focusNodes.values) {
+      focusNode.dispose();
+    }
     super.dispose();
   }
+
+  FocusNode _focusNodeFor(String key) =>
+      _focusNodes.putIfAbsent(key, FocusNode.new);
 
   void syncFromConfig() {
     final values = _values(widget.viewModel.config);
@@ -460,14 +468,19 @@ class _ParameterCardState extends State<_ParameterCard> {
         entry.key,
         TextEditingController.new,
       );
-      controller.text = entry.value;
+      if (_focusNodeFor(entry.key).hasFocus || controller.text == entry.value) {
+        continue;
+      }
+      controller.value = TextEditingValue(
+        text: entry.value,
+        selection: TextSelection.collapsed(offset: entry.value.length),
+      );
     }
     if (mounted) setState(() {});
   }
 
   Map<String, String> _values(LoanPlanConfig config) {
-    String editableNumber(double value) =>
-        value == 0 ? '' : value.toStringAsFixed(2);
+    String editableNumber(double value) => formatLoanEditableNumber(value);
     return {
       'commercialOpeningBalance': editableNumber(
         config.commercialOpeningBalance,
@@ -703,6 +716,7 @@ class _ParameterCardState extends State<_ParameterCard> {
       padding: const EdgeInsets.only(top: 8),
       child: TextField(
         controller: _controllers[key],
+        focusNode: _focusNodeFor(key),
         enabled: fieldEnabled,
         readOnly: date,
         onTap: date && fieldEnabled ? () => _pickRepaymentDate(key) : null,

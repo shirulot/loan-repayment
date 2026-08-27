@@ -1,3 +1,13 @@
+/// Keeps editable amount fields easy to modify by omitting insignificant
+/// trailing zeros while retaining the existing two-decimal currency precision.
+String formatLoanEditableNumber(double value) {
+  if (value == 0) return '';
+
+  final fixed = value.toStringAsFixed(2);
+  final trimmed = fixed.replaceFirst(RegExp(r'\.?0+$'), '');
+  return trimmed.isEmpty ? '0' : trimmed;
+}
+
 /// Formats loan amounts consistently across the overview and detail pages.
 String formatLoanMoney(double value) {
   if (!value.isFinite) return value.toString();

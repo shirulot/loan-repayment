@@ -32,6 +32,8 @@ class MobileLoanPlanLayout extends StatefulWidget {
 class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
   final Map<String, TextEditingController> _controllers =
       <String, TextEditingController>{};
+  // Tracks active edits so model synchronization does not overwrite them.
+  final Map<String, FocusNode> _focusNodes = <String, FocusNode>{};
   late List<RecentPrepayment> _recentPrepayments;
   Timer? _recentPrepaymentSyncTimer;
   final Set<String> _expandedSections = <String>{};
@@ -58,22 +60,33 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     for (final controller in _controllers.values) {
       controller.dispose();
     }
+    for (final focusNode in _focusNodes.values) {
+      focusNode.dispose();
+    }
     super.dispose();
+  }
+
+  FocusNode _focusNodeFor(String key) =>
+      _focusNodes.putIfAbsent(key, FocusNode.new);
+
+  /// Avoids rewriting an active field when its own edit triggers a model sync.
+  void _setControllerTextIfIdle(String key, String value) {
+    final controller = _controllers.putIfAbsent(key, TextEditingController.new);
+    if (_focusNodeFor(key).hasFocus || controller.text == value) return;
+    controller.value = TextEditingValue(
+      text: value,
+      selection: TextSelection.collapsed(offset: value.length),
+    );
   }
 
   void _syncFromConfig() {
     for (final entry in _values(widget.config).entries) {
-      final controller = _controllers.putIfAbsent(
-        entry.key,
-        TextEditingController.new,
-      );
-      controller.text = entry.value;
+      _setControllerTextIfIdle(entry.key, entry.value);
     }
   }
 
   Map<String, String> _values(LoanPlanConfig config) {
-    String editableNumber(double value) =>
-        value == 0 ? '' : value.toStringAsFixed(2);
+    String editableNumber(double value) => formatLoanEditableNumber(value);
     return {
       'commercialOpeningBalance': editableNumber(
         config.commercialOpeningBalance,
@@ -277,18 +290,14 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     setState(() {
       _recentPrepayments = events;
       for (var index = 0; index < events.length; index++) {
-        final amountController = _controllers.putIfAbsent(
+        _setControllerTextIfIdle(
           _recentAmountKey(index),
-          TextEditingController.new,
+          formatLoanEditableNumber(events[index].amount),
         );
-        final dateController = _controllers.putIfAbsent(
+        _setControllerTextIfIdle(
           _recentDateKey(index),
-          TextEditingController.new,
+          events[index].repaymentDate,
         );
-        amountController.text = events[index].amount == 0
-            ? ''
-            : events[index].amount.toStringAsFixed(2);
-        dateController.text = events[index].repaymentDate;
       }
     });
   }
@@ -984,6 +993,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
       padding: const EdgeInsets.only(top: 8),
       child: TextField(
         controller: _controllers[key],
+        focusNode: _focusNodeFor(key),
         enabled: fieldEnabled,
         readOnly: date,
         onTap: date && fieldEnabled ? () => _pickRepaymentDate(key) : null,

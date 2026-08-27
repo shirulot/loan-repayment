@@ -7,6 +7,7 @@ import 'package:loan_repayment_manager/domain/services/loan_calculator.dart';
 import 'package:loan_repayment_manager/ui/features/loan/view_models/loan_planner_view_model.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_detail_page.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_calendar_formatters.dart';
+import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_formatters.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_mobile_layout.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_page.dart';
 
@@ -33,6 +34,57 @@ void main() {
   test('formats a lunar month in the user-facing year-month style', () {
     expect(formatLoanLunarMonth('2026-08'), '2026-6月');
     expect(formatLoanLunarMonth('not-a-month'), '—');
+  });
+
+  test('keeps editable amounts free of insignificant trailing zeros', () {
+    expect(formatLoanEditableNumber(500000), '500000');
+    expect(formatLoanEditableNumber(1.2), '1.2');
+    expect(formatLoanEditableNumber(0), '');
+  });
+
+  testWidgets('editing an amount preserves its text and caret', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final viewModel = createViewModel();
+    addTearDown(viewModel.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MobileLoanPlanLayout(
+            viewModel: viewModel,
+            config: viewModel.config,
+            onViewDetails: () {},
+            onViewMonth: (_) {},
+            onShowInfo: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final recentSection = find.text('最近三笔提前还款');
+    await tester.ensureVisible(recentSection);
+    await tester.tap(recentSection);
+    await tester.pumpAndSettle();
+
+    final amountField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.labelText == '第 1 笔金额',
+    );
+    expect(amountField, findsOneWidget);
+    await tester.ensureVisible(amountField);
+    await tester.tap(amountField);
+    await tester.enterText(amountField, '1');
+
+    final controller = tester.widget<TextField>(amountField).controller!;
+    expect(controller.text, '1');
+
+    await tester.pump(const Duration(milliseconds: 351));
+
+    expect(controller.text, '1');
+    expect(controller.selection, const TextSelection.collapsed(offset: 1));
   });
 
   testWidgets('tapping a preview row reports its repayment month', (
