@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../../../data/services/loan_export_service.dart';
 import '../../../../data/services/loan_plan_import_service.dart';
@@ -24,9 +23,9 @@ enum _PlanColumnKey {
   expectedPrepayment(label: '预期提前', header: '预期\n提前', width: 74),
   repaymentDate(label: '还贷日期', header: '还贷\n日期', width: 92),
   repaymentStatus(label: '还贷状态', header: '还贷\n状态', width: 70),
-  actualPrepayment(label: '实际提前', header: '实际\n提前', width: 78),
   prepaymentInterest(label: '当日提前利息', header: '当日\n利息', width: 78),
   nextMonthBasePayment(label: '转息前月供', header: '转息前\n月供', width: 86),
+  transferDifference(label: '转息差额', header: '转息\n差额', width: 74),
   nextMonthBaseReduction(label: '转息前月供减少', header: '转息前\n月供减少', width: 78),
   commercialBalance(label: '商贷余额', header: '商贷\n余额', width: 80),
   providentBalance(label: '公积金余额', header: '公积金\n余额', width: 80),
@@ -53,14 +52,54 @@ const _defaultPlanVisibleColumns = <_PlanColumnKey>{
   _PlanColumnKey.expectedPrepayment,
   _PlanColumnKey.repaymentDate,
   _PlanColumnKey.repaymentStatus,
-  _PlanColumnKey.actualPrepayment,
   _PlanColumnKey.prepaymentInterest,
   _PlanColumnKey.nextMonthBasePayment,
+  _PlanColumnKey.transferDifference,
   _PlanColumnKey.nextMonthBaseReduction,
   _PlanColumnKey.commercialBalance,
   _PlanColumnKey.providentBalance,
   _PlanColumnKey.totalBalance,
 };
+
+/// A display row expands one monthly calculation into one row per repayment
+/// event. Each row compares its monthly fields with the preceding month,
+/// never with another transaction in the same month.
+class _PlanDisplayRow {
+  const _PlanDisplayRow({
+    required this.row,
+    this.prepayment,
+    required this.isPrimary,
+    required this.isLast,
+  });
+
+  final LoanPlanRow row;
+  final LoanPrepaymentDetail? prepayment;
+  final bool isPrimary;
+  final bool isLast;
+
+  static List<_PlanDisplayRow> expand(List<LoanPlanRow> rows) {
+    return [
+      for (final row in rows)
+        if (row.prepaymentDetails.length <= 1)
+          _PlanDisplayRow(
+            row: row,
+            prepayment: row.prepaymentDetails.isEmpty
+                ? null
+                : row.prepaymentDetails.single,
+            isPrimary: true,
+            isLast: true,
+          )
+        else
+          for (var index = 0; index < row.prepaymentDetails.length; index++)
+            _PlanDisplayRow(
+              row: row,
+              prepayment: row.prepaymentDetails[index],
+              isPrimary: index == 0,
+              isLast: index == row.prepaymentDetails.length - 1,
+            ),
+    ];
+  }
+}
 
 /// Full-screen, compact view for editing and reviewing all repayment rows.
 class LoanPlanDetailPage extends StatefulWidget {
@@ -102,8 +141,8 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
   }
 
   Future<void> _restoreVisibleColumns() async {
-    final savedColumns = await _columnSettingsService.load();
-    if (!mounted || _columnSettingsRevision != 0 || savedColumns == null) {
+    final savedSettings = await _columnSettingsService.load();
+    if (!mounted || _columnSettingsRevision != 0 || savedSettings == null) {
       return;
     }
 
@@ -111,9 +150,20 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
         .where(
           (column) =>
               column != _PlanColumnKey.gregorianMonth &&
-              savedColumns.contains(column.name),
+              savedSettings.visibleColumns.contains(column.name),
         )
         .toSet();
+    if (savedSettings.schemaVersion <
+        LoanPlanColumnSettingsService.currentSchemaVersion) {
+      // Add newly introduced default columns once without overriding future
+      // visibility choices made by the user.
+      restoredColumns.add(_PlanColumnKey.transferDifference);
+      unawaited(
+        _columnSettingsService.save(
+          restoredColumns.map((column) => column.name),
+        ),
+      );
+    }
     setState(() {
       _visibleColumns
         ..clear()
@@ -593,7 +643,7 @@ class _CompactPlanTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final rows = viewModel.rows;
+    final rows = _PlanDisplayRow.expand(viewModel.rows);
     final columnsToRender = columns(visibleColumns: visibleColumns);
 
     return Table(
@@ -612,7 +662,8 @@ class _CompactPlanTable extends StatelessWidget {
         ),
         ...rows.asMap().entries.map((entry) {
           final rowIndex = entry.key;
-          final row = entry.value;
+          final displayRow = entry.value;
+          final row = displayRow.row;
           void onTap() => onRowTap(row.month);
           Widget cell(Widget child) => _tapCell(child, onTap);
           final rowCells = <Widget>[];
@@ -621,7 +672,7 @@ class _CompactPlanTable extends StatelessWidget {
               _dataCell(
                 context: context,
                 column: column,
-                row: row,
+                displayRow: displayRow,
                 viewModel: viewModel,
                 amountsMasked: amountsMasked,
               ),
@@ -663,10 +714,12 @@ class _CompactPlanTable extends StatelessWidget {
   static Widget _dataCell({
     required BuildContext context,
     required _PlanColumnKey column,
-    required LoanPlanRow row,
+    required _PlanDisplayRow displayRow,
     required LoanPlannerViewModel viewModel,
     required bool amountsMasked,
   }) {
+    final row = displayRow.row;
+    final prepayment = displayRow.prepayment;
     final colors = Theme.of(context).colorScheme;
     return switch (column) {
       _PlanColumnKey.gregorianMonth => _textCell(
@@ -720,34 +773,33 @@ class _CompactPlanTable extends StatelessWidget {
         bold: row.totalReduction != null,
       ),
       _PlanColumnKey.expectedPrepayment => _textCell(
-        formatLoanMoneyProtected(row.expectedPrepayment, masked: amountsMasked),
+        formatLoanMoneyProtected(
+          prepayment?.expectedAmount ?? row.expectedPrepayment,
+          masked: amountsMasked,
+        ),
         color: colors.primary,
       ),
       _PlanColumnKey.repaymentDate => _textCell(
-        amountsMasked ? '****' : (row.effectivePrepaymentDate ?? '—'),
+        amountsMasked
+            ? '****'
+            : (prepayment?.repaymentDate ?? row.effectivePrepaymentDate ?? '—'),
       ),
       _PlanColumnKey.repaymentStatus => _textCell(
-        row.actualPrepayment == null ? '预定日期' : '已结清',
-        bold: row.actualPrepayment != null,
-        color: row.actualPrepayment == null
+        (prepayment?.actualPrepayment ?? row.actualPrepayment) == null
+            ? '预定日期'
+            : '已结清',
+        bold: (prepayment?.actualPrepayment ?? row.actualPrepayment) != null,
+        color: (prepayment?.actualPrepayment ?? row.actualPrepayment) == null
             ? colors.onSurfaceVariant
             : colors.tertiary,
       ),
-      _PlanColumnKey.actualPrepayment => _ActualPrepaymentCell(
-        key: ValueKey(row.month),
-        value: row.actualPrepayment,
-        masked: amountsMasked,
-        locked: row.actualPrepayment != null,
-        onChanged: (value) =>
-            viewModel.updateActualPrepayment(row.month, value),
-      ),
       _PlanColumnKey.prepaymentInterest => _textCell(
         formatLoanMoneyProtected(
-          row.prepaymentInterestDueNow,
+          prepayment?.interestDueNow ?? row.prepaymentInterestDueNow,
           masked: amountsMasked,
           dashWhenEmpty: true,
         ),
-        color: row.prepaymentInterestDueNow > 0
+        color: (prepayment?.interestDueNow ?? row.prepaymentInterestDueNow) > 0
             ? colors.tertiary
             : colors.onSurfaceVariant,
       ),
@@ -758,6 +810,12 @@ class _CompactPlanTable extends StatelessWidget {
         ),
         bold: true,
         color: colors.primary,
+      ),
+      _PlanColumnKey.transferDifference => _textCell(
+        formatLoanMoneyProtected(row.transferDifference, masked: amountsMasked),
+        color: row.transferDifference == 0
+            ? colors.onSurfaceVariant
+            : colors.tertiary,
       ),
       _PlanColumnKey.nextMonthBaseReduction => _textCell(
         formatLoanMoneyProtected(
@@ -770,13 +828,22 @@ class _CompactPlanTable extends StatelessWidget {
             : colors.primary,
       ),
       _PlanColumnKey.commercialBalance => _textCell(
-        formatLoanMoneyProtected(row.commercialClosing, masked: amountsMasked),
+        formatLoanMoneyProtected(
+          prepayment?.commercialClosing ?? row.commercialClosing,
+          masked: amountsMasked,
+        ),
       ),
       _PlanColumnKey.providentBalance => _textCell(
-        formatLoanMoneyProtected(row.providentClosing, masked: amountsMasked),
+        formatLoanMoneyProtected(
+          prepayment?.providentClosing ?? row.providentClosing,
+          masked: amountsMasked,
+        ),
       ),
       _PlanColumnKey.totalBalance => _textCell(
-        formatLoanMoneyProtected(row.totalBalance, masked: amountsMasked),
+        formatLoanMoneyProtected(
+          prepayment?.totalBalance ?? row.totalBalance,
+          masked: amountsMasked,
+        ),
       ),
     };
   }
@@ -1065,9 +1132,12 @@ class _FrozenFixedColumns extends StatelessWidget {
       },
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       border: _CompactPlanTable._tableBorder(colors),
-      children: viewModel.rows.asMap().entries.map((entry) {
+      children: _PlanDisplayRow.expand(viewModel.rows).asMap().entries.map((
+        entry,
+      ) {
         final rowIndex = entry.key;
-        final row = entry.value;
+        final displayRow = entry.value;
+        final row = displayRow.row;
         final rowColor = row.month == highlightedMonth
             ? colors.secondaryContainer
             : row.totalBalance < 0.01
@@ -1085,7 +1155,7 @@ class _FrozenFixedColumns extends StatelessWidget {
                     _CompactPlanTable._dataCell(
                       context: context,
                       column: column,
-                      row: row,
+                      displayRow: displayRow,
                       viewModel: viewModel,
                       amountsMasked: amountsMasked,
                     ),
@@ -1098,117 +1168,4 @@ class _FrozenFixedColumns extends StatelessWidget {
       }).toList(),
     );
   }
-}
-
-class _ActualPrepaymentCell extends StatefulWidget {
-  const _ActualPrepaymentCell({
-    super.key,
-    required this.value,
-    required this.masked,
-    required this.locked,
-    required this.onChanged,
-  });
-
-  final double? value;
-  final bool masked;
-  final bool locked;
-  final ValueChanged<double?> onChanged;
-
-  @override
-  State<_ActualPrepaymentCell> createState() => _ActualPrepaymentCellState();
-}
-
-class _ActualPrepaymentCellState extends State<_ActualPrepaymentCell> {
-  late final TextEditingController _controller;
-  late final FocusNode _focusNode;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: _asText(widget.value));
-    _focusNode = FocusNode()..addListener(_handleFocusChange);
-  }
-
-  @override
-  void didUpdateWidget(covariant _ActualPrepaymentCell oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.value != widget.value &&
-        _controller.text != _asText(widget.value)) {
-      _controller.text = _asText(widget.value);
-    }
-  }
-
-  @override
-  void dispose() {
-    _focusNode
-      ..removeListener(_handleFocusChange)
-      ..dispose();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _handleFocusChange() {
-    if (!_focusNode.hasFocus) _commit();
-  }
-
-  void _commit() {
-    final text = _controller.text.trim();
-    widget.onChanged(text.isEmpty ? null : double.tryParse(text));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    if (widget.masked) {
-      return const Center(
-        child: Text('****', style: TextStyle(fontSize: 10.5)),
-      );
-    }
-    if (widget.locked) {
-      return Center(
-        child: Text(
-          _asText(widget.value),
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 10.5),
-        ),
-      );
-    }
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 3),
-      child: SizedBox(
-        height: 30,
-        child: TextField(
-          controller: _controller,
-          focusNode: _focusNode,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-          ],
-          onSubmitted: (_) => _commit(),
-          onEditingComplete: _commit,
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 10.5, color: colors.primary),
-          decoration: InputDecoration(
-            hintText: '实际',
-            hintStyle: const TextStyle(fontSize: 10),
-            filled: true,
-            fillColor: colors.primaryContainer.withValues(alpha: 0.58),
-            isDense: true,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 3,
-              vertical: 6,
-            ),
-            border: OutlineInputBorder(
-              borderSide: BorderSide(
-                color: colors.primary.withValues(alpha: 0.4),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _asText(double? value) =>
-      value == null ? '' : value.toStringAsFixed(2);
 }

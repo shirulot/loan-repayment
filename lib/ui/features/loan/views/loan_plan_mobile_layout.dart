@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -30,21 +32,29 @@ class MobileLoanPlanLayout extends StatefulWidget {
 class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
   final Map<String, TextEditingController> _controllers =
       <String, TextEditingController>{};
+  late List<RecentPrepayment> _recentPrepayments;
+  Timer? _recentPrepaymentSyncTimer;
+  final Set<String> _expandedSections = <String>{};
 
   @override
   void initState() {
     super.initState();
+    _recentPrepayments = _recentEventsForEditing(widget.config);
     _syncFromConfig();
   }
 
   @override
   void didUpdateWidget(covariant MobileLoanPlanLayout oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.config != widget.config) _syncFromConfig();
+    if (oldWidget.config != widget.config) {
+      _recentPrepayments = _recentEventsForEditing(widget.config);
+      _syncFromConfig();
+    }
   }
 
   @override
   void dispose() {
+    _recentPrepaymentSyncTimer?.cancel();
     for (final controller in _controllers.values) {
       controller.dispose();
     }
@@ -78,14 +88,12 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
       'monthlySalary': editableNumber(config.monthlySalary),
       'monthlyExtraIncome': editableNumber(config.monthlyExtraIncome),
       'monthlyLivingCost': editableNumber(config.monthlyLivingCost),
-      'fixedAugustPrepayment': editableNumber(config.fixedAugustPrepayment),
-      'fixedSeptemberPrepayment': editableNumber(
-        config.fixedSeptemberPrepayment,
-      ),
-      'fixedOctoberPrepayment': editableNumber(config.fixedOctoberPrepayment),
-      'fixedAugustPrepaymentDate': config.fixedAugustPrepaymentDate,
-      'fixedSeptemberPrepaymentDate': config.fixedSeptemberPrepaymentDate,
-      'fixedOctoberPrepaymentDate': config.fixedOctoberPrepaymentDate,
+      for (var index = 0; index < _recentPrepayments.length; index++) ...{
+        _recentAmountKey(index): editableNumber(
+          _recentPrepayments[index].amount,
+        ),
+        _recentDateKey(index): _recentPrepayments[index].repaymentDate,
+      },
     };
   }
 
@@ -135,16 +143,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
           old.monthlyExtraIncome,
         ),
         monthlyLivingCost: _number('monthlyLivingCost', old.monthlyLivingCost),
-        // Blank recent expected amounts intentionally fall back to cash flow.
-        fixedAugustPrepayment: _zeroIfBlank('fixedAugustPrepayment'),
-        fixedSeptemberPrepayment: _zeroIfBlank('fixedSeptemberPrepayment'),
-        fixedOctoberPrepayment: _zeroIfBlank('fixedOctoberPrepayment'),
-        fixedAugustPrepaymentDate:
-            _controllers['fixedAugustPrepaymentDate']?.text.trim() ?? '',
-        fixedSeptemberPrepaymentDate:
-            _controllers['fixedSeptemberPrepaymentDate']?.text.trim() ?? '',
-        fixedOctoberPrepaymentDate:
-            _controllers['fixedOctoberPrepaymentDate']?.text.trim() ?? '',
+        recentPrepayments: _eventsFromControllers(),
       ),
     );
     ScaffoldMessenger.of(
@@ -153,30 +152,149 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
   }
 
   bool _hasValidRecentPrepaymentDates() {
-    final dateKeys = [
-      'fixedAugustPrepaymentDate',
-      'fixedSeptemberPrepaymentDate',
-      'fixedOctoberPrepaymentDate',
-    ];
-    for (var index = 0; index < dateKeys.length; index++) {
-      final value = _controllers[dateKeys[index]]?.text.trim() ?? '';
-      if (value.isEmpty) continue;
-      final date = LoanPlanConfig.parseLoanStartDate(value);
-      final expectedMonth = widget.viewModel.fixedPrepaymentMonths[index];
-      final actualMonth = date == null
-          ? ''
-          : '${date.year}-${date.month.toString().padLeft(2, '0')}';
-      if (actualMonth != expectedMonth) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('请填写 ${_displayMonth(expectedMonth)} 内有效的还贷日期。'),
-          ),
-        );
+    for (var index = 0; index < _recentPrepayments.length; index++) {
+      final value = _controllers[_recentDateKey(index)]?.text.trim() ?? '';
+      final amount = _zeroIfBlank(_recentAmountKey(index));
+      if (value.isEmpty && amount <= 0) continue;
+      if (value.isEmpty || LoanPlanConfig.parseLoanStartDate(value) == null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('每笔提前还款均需同时填写金额和有效日期。')));
         return false;
       }
     }
     return true;
   }
+
+  String _recentAmountKey(int index) => 'recentPrepayment-$index-amount';
+
+  String _recentDateKey(int index) => 'recentPrepayment-$index-date';
+
+  List<RecentPrepayment> _eventsFromControllers() {
+    return List<RecentPrepayment>.generate(_recentPrepayments.length, (index) {
+      final event = _recentPrepayments[index];
+      return event.copyWith(
+        amount: _zeroIfBlank(_recentAmountKey(index)),
+        repaymentDate: _controllers[_recentDateKey(index)]?.text.trim() ?? '',
+      );
+    });
+  }
+
+  /// Recent transactions drive the plan directly, so they do not wait for the
+  /// page-wide apply button before the repayment tab is refreshed.
+  void _scheduleRecentPrepaymentSync() {
+    _recentPrepaymentSyncTimer?.cancel();
+    _recentPrepaymentSyncTimer = Timer(
+      const Duration(milliseconds: 350),
+      _commitRecentPrepayments,
+    );
+  }
+
+  void _commitRecentPrepayments() {
+    if (!mounted) return;
+    widget.viewModel.updateConfig(
+      widget.viewModel.config.copyWith(
+        recentPrepayments: _eventsFromControllers(),
+      ),
+    );
+  }
+
+  List<RecentPrepayment> _recentEventsForEditing(LoanPlanConfig config) {
+    final events = List<RecentPrepayment>.from(config.recentPrepayments);
+    if (events.isEmpty) {
+      events.addAll([
+        RecentPrepayment(
+          id: 'legacy-0',
+          amount: config.fixedAugustPrepayment,
+          repaymentDate: config.fixedAugustPrepaymentDate,
+          legacyMonthOffset: 0,
+        ),
+        RecentPrepayment(
+          id: 'legacy-1',
+          amount: config.fixedSeptemberPrepayment,
+          repaymentDate: config.fixedSeptemberPrepaymentDate,
+          legacyMonthOffset: 1,
+        ),
+        RecentPrepayment(
+          id: 'legacy-2',
+          amount: config.fixedOctoberPrepayment,
+          repaymentDate: config.fixedOctoberPrepaymentDate,
+          legacyMonthOffset: 2,
+        ),
+      ]);
+    }
+    while (events.length < 3) {
+      events.add(_newRecentPrepayment());
+    }
+    return events.take(3).toList(growable: true);
+  }
+
+  RecentPrepayment _newRecentPrepayment() => RecentPrepayment(
+    id: 'recent-${DateTime.now().microsecondsSinceEpoch}',
+    repaymentDate: _dateText(DateTime.now()),
+  );
+
+  void _addRecentPrepayment() {
+    final events = _eventsFromControllers()..add(_newRecentPrepayment());
+    events.sort(_newestFirst);
+    final retained = events.take(3).toList(growable: true);
+    _replaceRecentPrepayments(retained);
+    _commitRecentPrepayments();
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('已加入一笔还款，日期最远的一笔已移出最近三笔。')));
+  }
+
+  void _removeRecentPrepayment(int index) {
+    final events = _eventsFromControllers()..removeAt(index);
+    final existingIds = events.map((event) => event.id).toSet();
+    final existingPayments = events
+        .map((event) => '${event.repaymentDate}-${event.amount}')
+        .toSet();
+    final replacement = widget.viewModel.settledPrepaymentCandidates
+        .where(
+          (event) =>
+              !existingIds.contains(event.id) &&
+              !existingPayments.contains(
+                '${event.repaymentDate}-${event.amount}',
+              ),
+        )
+        .cast<RecentPrepayment?>()
+        .firstWhere((event) => event != null, orElse: () => null);
+    if (replacement != null) events.add(replacement);
+    while (events.length < 3) {
+      events.add(_newRecentPrepayment());
+    }
+    events.sort(_newestFirst);
+    _replaceRecentPrepayments(events.take(3).toList(growable: true));
+    _commitRecentPrepayments();
+  }
+
+  int _newestFirst(RecentPrepayment left, RecentPrepayment right) =>
+      right.repaymentDate.compareTo(left.repaymentDate);
+
+  void _replaceRecentPrepayments(List<RecentPrepayment> events) {
+    setState(() {
+      _recentPrepayments = events;
+      for (var index = 0; index < events.length; index++) {
+        final amountController = _controllers.putIfAbsent(
+          _recentAmountKey(index),
+          TextEditingController.new,
+        );
+        final dateController = _controllers.putIfAbsent(
+          _recentDateKey(index),
+          TextEditingController.new,
+        );
+        amountController.text = events[index].amount == 0
+            ? ''
+            : events[index].amount.toStringAsFixed(2);
+        dateController.text = events[index].repaymentDate;
+      }
+    });
+  }
+
+  String _dateText(DateTime value) =>
+      '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
 
   void _saveCashFlow() {
     final old = widget.viewModel.config;
@@ -267,7 +385,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
           const SizedBox(height: 12),
           _previewHeader(context),
           const SizedBox(height: 8),
-          _upcomingPreview(context, rows.take(3).toList()),
+          _upcomingPreview(context, _futurePreviewRows(rows)),
           const SizedBox(height: 18),
           _gradientApplyButton(),
         ],
@@ -304,6 +422,27 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
         ),
       ),
     );
+  }
+
+  /// 首页预览只展示尚未结清的未来月份，完整计划仍保留已还记录。
+  List<LoanPlanRow> _futurePreviewRows(List<LoanPlanRow> rows) {
+    final now = DateTime.now();
+    return rows
+        .where(
+          (row) => !row.prepaymentDetails.any((detail) {
+            if (detail.actualPrepayment == null ||
+                detail.repaymentDate == null) {
+              return false;
+            }
+            final repaymentDate = LoanPlanConfig.parseLoanStartDate(
+              detail.repaymentDate!,
+            );
+            // 当天仍展示当月；从还款日的下一天开始进入下一个月预览。
+            return repaymentDate != null && now.isAfter(repaymentDate);
+          }),
+        )
+        .take(3)
+        .toList(growable: false);
   }
 
   Widget _pageHeader(BuildContext context) {
@@ -403,51 +542,19 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
           Divider(color: colors.outlineVariant.withValues(alpha: 0.48)),
           _compactSection(
             context,
-            title: '近期期望还款额',
+            title: '最近三笔提前还款',
             icon: Icons.track_changes_outlined,
             summary: _expectedPrepaymentSummary(),
             children: [
-              _inputField(
-                _displayMonth(widget.viewModel.fixedPrepaymentMonths[0]),
-                'fixedAugustPrepayment',
-                suffix: '元',
+              ...List<Widget>.generate(
+                _recentPrepayments.length,
+                _recentPrepaymentFields,
               ),
-              _inputField(
-                '${_displayMonth(widget.viewModel.fixedPrepaymentMonths[0])} 还贷日期',
-                'fixedAugustPrepaymentDate',
-                suffix: _repaymentStatus(
-                  widget.viewModel.fixedPrepaymentMonths[0],
-                ),
-                date: true,
-                enabled: !_isSettled(widget.viewModel.fixedPrepaymentMonths[0]),
-              ),
-              _inputField(
-                _displayMonth(widget.viewModel.fixedPrepaymentMonths[1]),
-                'fixedSeptemberPrepayment',
-                suffix: '元',
-              ),
-              _inputField(
-                '${_displayMonth(widget.viewModel.fixedPrepaymentMonths[1])} 还贷日期',
-                'fixedSeptemberPrepaymentDate',
-                suffix: _repaymentStatus(
-                  widget.viewModel.fixedPrepaymentMonths[1],
-                ),
-                date: true,
-                enabled: !_isSettled(widget.viewModel.fixedPrepaymentMonths[1]),
-              ),
-              _inputField(
-                _displayMonth(widget.viewModel.fixedPrepaymentMonths[2]),
-                'fixedOctoberPrepayment',
-                suffix: '元',
-              ),
-              _inputField(
-                '${_displayMonth(widget.viewModel.fixedPrepaymentMonths[2])} 还贷日期',
-                'fixedOctoberPrepaymentDate',
-                suffix: _repaymentStatus(
-                  widget.viewModel.fixedPrepaymentMonths[2],
-                ),
-                date: true,
-                enabled: !_isSettled(widget.viewModel.fixedPrepaymentMonths[2]),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _addRecentPrepayment,
+                icon: const Icon(Icons.add_outlined, size: 18),
+                label: const Text('添加一笔（保留最近三笔）'),
               ),
             ],
           ),
@@ -482,9 +589,9 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
   }
 
   String _expectedPrepaymentSummary() {
-    final rows = widget.viewModel.rows;
-    final requested = rows.isEmpty ? 0.0 : rows.first.expectedPrepayment;
-    return requested > 0 ? '¥${_money(requested)}' : '留空自动计算';
+    final latest = widget.viewModel.latestSettledPrepayment;
+    if (latest == null) return '暂无已还';
+    return '¥${_money(latest.actualPrepayment ?? latest.amount)}';
   }
 
   /// 仅替换界面文本，保持控制器和计算使用原始金额。
@@ -660,7 +767,17 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     required List<Widget> children,
   }) {
     final colors = Theme.of(context).colorScheme;
+    final isExpanded = _expandedSections.contains(title);
     return ExpansionTile(
+      onExpansionChanged: (expanded) {
+        setState(() {
+          if (expanded) {
+            _expandedSections.add(title);
+          } else {
+            _expandedSections.remove(title);
+          }
+        });
+      },
       tilePadding: const EdgeInsets.symmetric(horizontal: 14),
       childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
       visualDensity: const VisualDensity(vertical: -1),
@@ -687,7 +804,16 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
               ).textTheme.labelSmall?.copyWith(color: colors.onSurfaceVariant),
             ),
           ),
-          Icon(Icons.expand_more, size: 20, color: colors.onSurfaceVariant),
+          AnimatedRotation(
+            turns: isExpanded ? 0.5 : 0,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            child: Icon(
+              Icons.expand_more,
+              size: 20,
+              color: colors.onSurfaceVariant,
+            ),
+          ),
         ],
       ),
       children: children,
@@ -861,6 +987,9 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
         enabled: fieldEnabled,
         readOnly: date,
         onTap: date && fieldEnabled ? () => _pickRepaymentDate(key) : null,
+        onChanged: key.startsWith('recentPrepayment-')
+            ? (_) => _scheduleRecentPrepaymentSync()
+            : null,
         obscureText: suffix == '元' && widget.viewModel.amountsMasked,
         obscuringCharacter: '*',
         keyboardType: date
@@ -904,30 +1033,50 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     );
   }
 
-  /// 已录入实际提前金额的月份不再允许改动其还贷日期。
-  bool _isSettled(String month) =>
-      widget.viewModel.actualPrepayments[month] != null;
+  Widget _recentPrepaymentFields(int index) {
+    final event = _recentPrepayments[index];
+    final isSettled = event.isSettled;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _inputField(
+          '第 ${index + 1} 笔金额',
+          _recentAmountKey(index),
+          suffix: '元',
+          enabled: !isSettled,
+        ),
+        _inputField(
+          '第 ${index + 1} 笔还款日期',
+          _recentDateKey(index),
+          suffix: isSettled ? '已结清' : '预定日期',
+          date: true,
+          enabled: !isSettled,
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: isSettled ? null : () => _removeRecentPrepayment(index),
+            icon: const Icon(Icons.delete_outline, size: 17),
+            label: const Text('删除此笔'),
+          ),
+        ),
+      ],
+    );
+  }
 
-  String _repaymentStatus(String month) => _isSettled(month) ? '已结清' : '预定日期';
-
-  /// 仅允许在当前近三期对应月份内选择，避免日期与计划行错位。
+  /// Recent events can use any valid historical or future repayment date.
   Future<void> _pickRepaymentDate(String key) async {
-    final month = _expectedMonthForDateKey(key);
-    if (month == null) return;
-    final parts = month.split('-');
-    final year = int.parse(parts[0]);
-    final monthNumber = int.parse(parts[1]);
-    final firstDate = DateTime(year, monthNumber);
-    final lastDate = DateTime(year, monthNumber + 1, 0);
     final parsed = LoanPlanConfig.parseLoanStartDate(
       _controllers[key]?.text ?? '',
     );
+    final firstDate = DateTime(2000);
+    final lastDate = DateTime(2100, 12, 31);
     final initialDate =
         parsed != null &&
             !parsed.isBefore(firstDate) &&
             !parsed.isAfter(lastDate)
         ? parsed
-        : firstDate;
+        : DateTime.now();
     final selected = await showDatePicker(
       context: context,
       initialDate: initialDate,
@@ -940,16 +1089,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     if (selected == null || !mounted) return;
     _controllers[key]?.text =
         '${selected.year}-${selected.month.toString().padLeft(2, '0')}-${selected.day.toString().padLeft(2, '0')}';
-  }
-
-  String? _expectedMonthForDateKey(String key) {
-    return switch (key) {
-      'fixedAugustPrepaymentDate' => widget.viewModel.fixedPrepaymentMonths[0],
-      'fixedSeptemberPrepaymentDate' =>
-        widget.viewModel.fixedPrepaymentMonths[1],
-      'fixedOctoberPrepaymentDate' => widget.viewModel.fixedPrepaymentMonths[2],
-      _ => null,
-    };
+    _commitRecentPrepayments();
   }
 
   Widget _readonlyField(
@@ -983,11 +1123,6 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
         ),
       ),
     );
-  }
-
-  String _displayMonth(String month) {
-    final parts = month.split('-');
-    return '${parts[0]}/${int.parse(parts[1])}';
   }
 
   String _displayPreviewMonth(String month) {

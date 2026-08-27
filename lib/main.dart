@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'ui/features/loan/view_models/loan_planner_view_model.dart';
 import 'ui/features/loan/views/loan_plan_page.dart';
@@ -38,6 +39,13 @@ class _LoanRepaymentAppState extends State<LoanRepaymentApp> {
     return MaterialApp(
       title: '提前还贷计算器',
       debugShowCheckedModeBanner: false,
+      locale: const Locale('zh', 'CN'),
+      supportedLocales: const [Locale('zh', 'CN')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: colorScheme,

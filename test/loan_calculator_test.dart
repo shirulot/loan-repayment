@@ -56,10 +56,47 @@ void main() {
     });
 
     expect(rows[1].actualPrepayment, 28000);
-    expect(rows[1].commercialClosing, closeTo(328119.76, 0.001));
+    expect(rows[1].commercialClosing, closeTo(328119.76345, 0.001));
     expect(
       rows[2].commercialOpening,
       closeTo(rows[1].commercialClosing, 0.001),
+    );
+  });
+
+  test('calculates every commercial payment on the 360-day basis', () {
+    const transferConfig = LoanPlanConfig(
+      commercialOpeningBalance: 375409.31,
+      commercialAnnualRate: 0.032,
+      remainingTerms: 200,
+      recentPrepayments: [
+        RecentPrepayment(
+          id: 'august-settled',
+          amount: 17500,
+          actualPrepayment: 17500,
+          repaymentDate: '2026-08-19',
+          isSettled: true,
+        ),
+      ],
+    );
+    final rows = calculator.calculate(transferConfig, {'2026-08': 17500});
+
+    expect(rows[1].commercialPrincipal, closeTo(1789.54655, 0.001));
+    expect(rows[1].commercialInterest, closeTo(986.23899, 0.001));
+    expect(rows[1].commercialPayment, closeTo(2775.78554, 0.001));
+    // October's payment uses September's 30-day interest period instead of
+    // falling back to the old annual-rate / 12 calculation.
+    expect(
+      rows[2].commercialInterest,
+      closeTo(rows[2].commercialOpening * 0.032 / 360 * 30, 0.001),
+    );
+  });
+
+  test('calculates the transfer difference from the two monthly totals', () {
+    final rows = calculator.calculate(config, {'2026-08': 17500});
+
+    expect(
+      rows[1].transferDifference,
+      closeTo(rows[1].totalPayment - rows[1].nextMonthBasePayment, 0.001),
     );
   });
 
@@ -90,6 +127,39 @@ void main() {
       );
     },
   );
+
+  test('does not carry an empty legacy October amount after dated events', () {
+    final eventConfig = config.copyWith(
+      monthlyExtraIncome: 10000,
+      recentPrepayments: const [
+        RecentPrepayment(
+          id: 'legacy-august',
+          amount: 17000,
+          legacyMonthOffset: 0,
+        ),
+        RecentPrepayment(
+          id: 'september-4',
+          amount: 30000,
+          repaymentDate: '2026-09-04',
+          legacyMonthOffset: 1,
+        ),
+        RecentPrepayment(
+          id: 'legacy-october',
+          amount: 7000,
+          legacyMonthOffset: 2,
+        ),
+      ],
+    );
+
+    final rows = calculator.calculate(eventConfig, {'2026-08': 17500});
+
+    expect(rows[1].expectedPrepayment, 30000);
+    expect(
+      rows[2].expectedPrepayment,
+      closeTo((rows[2].availableFunds / 10).ceilToDouble() * 10, 0.001),
+    );
+    expect(rows[2].expectedPrepayment, greaterThan(17000));
+  });
 
   test(
     'monthly cash flow uses the first normal payment instead of calibration zero',
@@ -294,9 +364,9 @@ void main() {
     final rows = calculator.calculate(datedConfig, {'2026-08': 1000});
 
     expect(rows.first.effectivePrepaymentDate, '2026-08-04');
-    expect(rows.first.prepaymentInterestDueNow, closeTo(4, 0.001));
+    expect(rows.first.prepaymentInterestDueNow, closeTo(4.0555556, 0.001));
     expect(rows.first.nextMonthBasePayment, closeTo(1137.5, 0.001));
-    expect(rows[1].commercialInterest, closeTo(300.75, 0.001));
+    expect(rows[1].commercialInterest, closeTo(282.875, 0.001));
     expect(rows[1].nextMonthBasePaymentReduction, closeTo(113.75, 0.001));
     expect(rows[2].nextMonthBasePaymentReduction, closeTo(22.8125, 0.001));
   });
@@ -310,13 +380,11 @@ void main() {
     );
     final rows = calculator.calculate(payoffConfig, {'2026-08': 10000});
 
-    expect(rows, hasLength(2));
-    expect(rows.last.month, '2026-09');
-    expect(rows.last.totalBalance, 0);
-    expect(rows.last.totalPayment, closeTo(270, 0.001));
+    expect(rows, hasLength(1));
+    expect(rows.single.totalBalance, 0);
   });
 
-  test('uses 366 days when a prepayment occurs in a leap year', () {
+  test('uses the 360-day basis for a leap-year repayment month', () {
     const leapYearConfig = LoanPlanConfig(
       commercialOpeningBalance: 10000,
       commercialAnnualRate: 0.366,
@@ -328,8 +396,51 @@ void main() {
       '2024-02': 1000,
     });
 
-    expect(rows.first.prepaymentInterestDueNow, closeTo(4, 0.001));
-    expect(rows[1].commercialInterest, closeTo(299.5, 0.001));
+    expect(rows.first.prepaymentInterestDueNow, closeTo(4.0666667, 0.001));
+    expect(rows[1].commercialInterest, closeTo(265.35, 0.001));
+  });
+
+  test('keeps multiple dated repayments independent in one month', () {
+    const multipleRepaymentConfig = LoanPlanConfig(
+      commercialOpeningBalance: 10000,
+      commercialAnnualRate: 0.365,
+      remainingTerms: 12,
+      recentPrepayments: [
+        RecentPrepayment(
+          id: 'august-4',
+          amount: 1000,
+          repaymentDate: '2026-08-04',
+        ),
+        RecentPrepayment(
+          id: 'august-20',
+          amount: 2000,
+          repaymentDate: '2026-08-20',
+        ),
+      ],
+    );
+
+    final rows = calculator.calculate(multipleRepaymentConfig, {});
+
+    expect(rows.first.expectedPrepayment, 3000);
+    expect(rows.first.prepaymentDetails, hasLength(2));
+    expect(
+      rows.first.prepaymentDetails.first.interestDueNow,
+      closeTo(4.0555556, 0.001),
+    );
+    expect(
+      rows.first.prepaymentDetails.last.interestDueNow,
+      closeTo(40.5555556, 0.001),
+    );
+    expect(rows.first.prepaymentInterestDueNow, closeTo(44.6111111, 0.001));
+    expect(
+      rows.first.prepaymentDetails.first.nextMonthDeferredInterest,
+      closeTo(0, 0.001),
+    );
+    expect(
+      rows.first.prepaymentDetails.last.nextMonthDeferredInterest,
+      closeTo(0, 0.001),
+    );
+    expect(rows[1].commercialInterest, closeTo(220.0138889, 0.001));
   });
 
   test(

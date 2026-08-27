@@ -16,6 +16,7 @@ class LoanPlanConfig {
     this.fixedAugustPrepaymentDate = '',
     this.fixedSeptemberPrepaymentDate = '',
     this.fixedOctoberPrepaymentDate = '',
+    this.recentPrepayments = const <RecentPrepayment>[],
     this.bankSeptemberPrincipal = 0,
     this.bankSeptemberInterest = 0,
     this.bankSeptemberPayment = 0,
@@ -41,6 +42,9 @@ class LoanPlanConfig {
   final String fixedAugustPrepaymentDate;
   final String fixedSeptemberPrepaymentDate;
   final String fixedOctoberPrepaymentDate;
+
+  /// 最近维护的提前还款事件。日期允许相同，以支持同月多笔还款。
+  final List<RecentPrepayment> recentPrepayments;
   final double bankSeptemberPrincipal;
   final double bankSeptemberInterest;
   final double bankSeptemberPayment;
@@ -60,6 +64,7 @@ class LoanPlanConfig {
     }
 
     const defaults = LoanPlanConfig();
+    final recentPrepayments = _recentPrepaymentsFromJson(json);
     return LoanPlanConfig(
       commercialOpeningBalance: number(
         'commercialOpeningBalance',
@@ -111,6 +116,7 @@ class LoanPlanConfig {
       fixedOctoberPrepaymentDate:
           json['fixedOctoberPrepaymentDate']?.toString() ??
           defaults.fixedOctoberPrepaymentDate,
+      recentPrepayments: recentPrepayments,
       bankSeptemberPrincipal: number(
         'bankSeptemberPrincipal',
         defaults.bankSeptemberPrincipal,
@@ -143,6 +149,7 @@ class LoanPlanConfig {
     String? fixedAugustPrepaymentDate,
     String? fixedSeptemberPrepaymentDate,
     String? fixedOctoberPrepaymentDate,
+    List<RecentPrepayment>? recentPrepayments,
     double? bankSeptemberPrincipal,
     double? bankSeptemberInterest,
     double? bankSeptemberPayment,
@@ -172,6 +179,7 @@ class LoanPlanConfig {
           fixedSeptemberPrepaymentDate ?? this.fixedSeptemberPrepaymentDate,
       fixedOctoberPrepaymentDate:
           fixedOctoberPrepaymentDate ?? this.fixedOctoberPrepaymentDate,
+      recentPrepayments: recentPrepayments ?? this.recentPrepayments,
       bankSeptemberPrincipal:
           bankSeptemberPrincipal ?? this.bankSeptemberPrincipal,
       bankSeptemberInterest:
@@ -198,6 +206,9 @@ class LoanPlanConfig {
       'fixedAugustPrepaymentDate': fixedAugustPrepaymentDate,
       'fixedSeptemberPrepaymentDate': fixedSeptemberPrepaymentDate,
       'fixedOctoberPrepaymentDate': fixedOctoberPrepaymentDate,
+      'recentPrepayments': recentPrepayments
+          .map((prepayment) => prepayment.toJson())
+          .toList(growable: false),
       'bankSeptemberPrincipal': bankSeptemberPrincipal,
       'bankSeptemberInterest': bankSeptemberInterest,
       'bankSeptemberPayment': bankSeptemberPayment,
@@ -221,6 +232,47 @@ class LoanPlanConfig {
     return date;
   }
 
+  /// Migrates the previous three fixed inputs into editable repayment events.
+  /// Empty legacy dates retain their former relative-month behavior.
+  static List<RecentPrepayment> _recentPrepaymentsFromJson(
+    Map<String, dynamic> json,
+  ) {
+    final raw = json['recentPrepayments'];
+    if (raw is List) {
+      return raw
+          .whereType<Map>()
+          .map(
+            (value) =>
+                RecentPrepayment.fromJson(Map<String, dynamic>.from(value)),
+          )
+          .toList(growable: false);
+    }
+
+    double number(String key) {
+      final value = json[key];
+      return value is num ? value.toDouble() : double.tryParse('$value') ?? 0;
+    }
+
+    return List<RecentPrepayment>.generate(3, (index) {
+      final amountKey = switch (index) {
+        0 => 'fixedAugustPrepayment',
+        1 => 'fixedSeptemberPrepayment',
+        _ => 'fixedOctoberPrepayment',
+      };
+      final dateKey = switch (index) {
+        0 => 'fixedAugustPrepaymentDate',
+        1 => 'fixedSeptemberPrepaymentDate',
+        _ => 'fixedOctoberPrepaymentDate',
+      };
+      return RecentPrepayment(
+        id: 'legacy-$index',
+        amount: number(amountKey),
+        repaymentDate: json[dateKey]?.toString() ?? '',
+        legacyMonthOffset: index,
+      );
+    });
+  }
+
   /// Calculates remaining months from the configured start date and term.
   /// Falls back to [remainingTerms] until both new inputs are valid.
   int remainingTermsAt(DateTime currentDate) {
@@ -236,6 +288,77 @@ class LoanPlanConfig {
     final remaining = totalMonths - completedMonths;
     return remaining < 0 ? 0 : remaining;
   }
+}
+
+/// A single scheduled or settled early-repayment transaction.
+class RecentPrepayment {
+  const RecentPrepayment({
+    required this.id,
+    this.amount = 0,
+    this.actualPrepayment,
+    this.repaymentDate = '',
+    this.isSettled = false,
+    this.legacyMonthOffset,
+  });
+
+  final String id;
+  final double amount;
+  final double? actualPrepayment;
+  final String repaymentDate;
+  final bool isSettled;
+
+  /// Only used while reading the former three-month fixed-field cache.
+  final int? legacyMonthOffset;
+
+  factory RecentPrepayment.fromJson(Map<String, dynamic> json) {
+    final amount = json['amount'];
+    final actualPrepayment = json['actualPrepayment'];
+    final offset = json['legacyMonthOffset'];
+    return RecentPrepayment(
+      id: json['id']?.toString() ?? '',
+      amount: amount is num
+          ? amount.toDouble()
+          : double.tryParse('$amount') ?? 0,
+      actualPrepayment: actualPrepayment is num
+          ? actualPrepayment.toDouble()
+          : double.tryParse('$actualPrepayment'),
+      repaymentDate: json['repaymentDate']?.toString() ?? '',
+      isSettled: json['isSettled'] == true,
+      legacyMonthOffset: offset is num
+          ? offset.toInt()
+          : int.tryParse('$offset'),
+    );
+  }
+
+  RecentPrepayment copyWith({
+    String? id,
+    double? amount,
+    double? actualPrepayment,
+    bool clearActualPrepayment = false,
+    String? repaymentDate,
+    bool? isSettled,
+    int? legacyMonthOffset,
+  }) {
+    return RecentPrepayment(
+      id: id ?? this.id,
+      amount: amount ?? this.amount,
+      actualPrepayment: clearActualPrepayment
+          ? null
+          : actualPrepayment ?? this.actualPrepayment,
+      repaymentDate: repaymentDate ?? this.repaymentDate,
+      isSettled: isSettled ?? this.isSettled,
+      legacyMonthOffset: legacyMonthOffset ?? this.legacyMonthOffset,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'amount': amount,
+    if (actualPrepayment != null) 'actualPrepayment': actualPrepayment,
+    'repaymentDate': repaymentDate,
+    'isSettled': isSettled,
+    if (legacyMonthOffset != null) 'legacyMonthOffset': legacyMonthOffset,
+  };
 }
 
 class LoanPlanRow {
@@ -259,6 +382,8 @@ class LoanPlanRow {
     required this.actualPrepayment,
     required this.plannedPrepaymentDate,
     required this.effectivePrepaymentDate,
+    required this.prepaymentDates,
+    required this.prepaymentDetails,
     required this.prepaymentInterestDueNow,
     required this.nextMonthBasePayment,
     required this.nextMonthBasePaymentReduction,
@@ -295,6 +420,12 @@ class LoanPlanRow {
   /// 与 [plannedPrepaymentDate] 保持一致，供导出和详情表直接使用。
   final String? effectivePrepaymentDate;
 
+  /// Every dated prepayment used by this month, in actual calculation order.
+  final List<String> prepaymentDates;
+
+  /// 明细表按该列表展开同月多笔提前还款，而月供仍只计算一次。
+  final List<LoanPrepaymentDetail> prepaymentDetails;
+
   /// 提前还款日当天应付的利息，不计入用户输入的提前本金。
   final double prepaymentInterestDueNow;
 
@@ -310,6 +441,38 @@ class LoanPlanRow {
   final double providentClosing;
 
   double get totalBalance => commercialClosing + providentClosing;
+
+  /// 转息导致的月供差额：实际月供合计减去转息前基础月供。
+  double get transferDifference => totalPayment - nextMonthBasePayment;
+
   double? get difference =>
       actualPrepayment == null ? null : actualPrepayment! - expectedPrepayment;
+}
+
+class LoanPrepaymentDetail {
+  const LoanPrepaymentDetail({
+    required this.eventId,
+    required this.amount,
+    required this.expectedAmount,
+    required this.actualPrepayment,
+    required this.repaymentDate,
+    required this.interestDueNow,
+    required this.nextMonthDeferredInterest,
+    required this.commercialClosing,
+    required this.providentClosing,
+  });
+
+  final double amount;
+  final double expectedAmount;
+  final String? eventId;
+  final double? actualPrepayment;
+  final String? repaymentDate;
+  final double interestDueNow;
+  final double nextMonthDeferredInterest;
+
+  /// Balance immediately after this transaction, used by an expanded plan row.
+  final double commercialClosing;
+  final double providentClosing;
+
+  double get totalBalance => commercialClosing + providentClosing;
 }

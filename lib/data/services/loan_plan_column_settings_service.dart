@@ -3,14 +3,26 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
+/// Persisted visibility choices plus the schema version used for migrations.
+class LoanPlanColumnSettings {
+  const LoanPlanColumnSettings({
+    required this.visibleColumns,
+    required this.schemaVersion,
+  });
+
+  final Set<String> visibleColumns;
+  final int schemaVersion;
+}
+
 /// Persists the user's repayment-plan column selection separately from loan data.
 class LoanPlanColumnSettingsService {
   const LoanPlanColumnSettingsService();
 
+  static const currentSchemaVersion = 1;
   static const _directoryName = 'loan-repayment-plans';
   static const _fileName = 'loan-plan-column-settings.json';
 
-  Future<Set<String>?> load() async {
+  Future<LoanPlanColumnSettings?> load() async {
     try {
       final file = await _settingsFile();
       if (!await file.exists()) return null;
@@ -20,7 +32,11 @@ class LoanPlanColumnSettingsService {
 
       final columns = decoded['visibleColumns'];
       if (columns is! List) return null;
-      return columns.whereType<String>().toSet();
+      final version = decoded['schemaVersion'];
+      return LoanPlanColumnSettings(
+        visibleColumns: columns.whereType<String>().toSet(),
+        schemaVersion: version is num ? version.toInt() : 0,
+      );
     } on Object {
       // A settings failure should fall back to the built-in default columns.
       return null;
@@ -30,6 +46,7 @@ class LoanPlanColumnSettingsService {
   Future<void> save(Iterable<String> visibleColumns) async {
     final file = await _settingsFile();
     final payload = <String, Object?>{
+      'schemaVersion': currentSchemaVersion,
       'visibleColumns': visibleColumns.toList(),
     };
     await file.writeAsString(

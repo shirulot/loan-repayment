@@ -67,6 +67,101 @@ void main() {
     expect(selectedMonth, '2026-09');
   });
 
+  testWidgets('future preview skips only a dated settled repayment month', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final viewModel = LoanPlannerViewModel(
+      calculator: LoanCalculator(currentDate: DateTime(2026, 8, 19)),
+      initialConfig: const LoanPlanConfig(
+        commercialOpeningBalance: 375409.31,
+        providentOpeningBalance: 500000,
+        commercialAnnualRate: 0.032,
+        providentAnnualRate: 0.026,
+        monthlySalary: 16500,
+        monthlyLivingCost: 3300,
+        recentPrepayments: [
+          RecentPrepayment(
+            id: 'august-settled',
+            amount: 17500,
+            actualPrepayment: 17500,
+            repaymentDate: '2026-08-04',
+            isSettled: true,
+          ),
+        ],
+      ),
+    );
+    addTearDown(viewModel.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MobileLoanPlanLayout(
+            viewModel: viewModel,
+            config: viewModel.config,
+            onViewDetails: () {},
+            onViewMonth: (_) {},
+            onShowInfo: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('2026年8月'), findsNothing);
+    expect(find.text('2026年9月'), findsOneWidget);
+    expect(find.text('2026年10月'), findsOneWidget);
+    expect(find.text('2026年11月'), findsOneWidget);
+  });
+
+  testWidgets(
+    'future preview keeps a settled month when its repayment date is empty',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final viewModel = LoanPlannerViewModel(
+        calculator: LoanCalculator(currentDate: DateTime(2026, 8, 19)),
+        initialConfig: const LoanPlanConfig(
+          commercialOpeningBalance: 375409.31,
+          providentOpeningBalance: 500000,
+          commercialAnnualRate: 0.032,
+          providentAnnualRate: 0.026,
+          monthlySalary: 16500,
+          monthlyLivingCost: 3300,
+          recentPrepayments: [
+            RecentPrepayment(
+              id: 'august-date-missing',
+              amount: 17500,
+              actualPrepayment: 17500,
+              isSettled: true,
+            ),
+          ],
+        ),
+      );
+      addTearDown(viewModel.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MobileLoanPlanLayout(
+              viewModel: viewModel,
+              config: viewModel.config,
+              onViewDetails: () {},
+              onViewMonth: (_) {},
+              onShowInfo: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('2026年8月'), findsOneWidget);
+    },
+  );
+
   testWidgets('column settings controls lunar and other visible columns', (
     tester,
   ) async {
@@ -81,6 +176,7 @@ void main() {
     expect(find.text('公历\n月份'), findsAtLeastNWidgets(1));
     expect(find.text('农历\n月份'), findsNothing);
     expect(find.text('差额'), findsNothing);
+    expect(find.text('转息\n差额'), findsAtLeastNWidgets(1));
 
     await tester.tap(find.text('列设置'));
     await tester.pumpAndSettle();

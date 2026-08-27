@@ -65,6 +65,38 @@ class LoanPlannerViewModel extends ChangeNotifier {
   List<String> get fixedPrepaymentMonths =>
       List.unmodifiable(List<String>.generate(3, _calculator.monthAt));
 
+  /// Historical settled records are used to fill an empty recent-event slot.
+  List<RecentPrepayment> get settledPrepaymentCandidates {
+    final candidates = <RecentPrepayment>[
+      for (final event in _config.recentPrepayments)
+        if (event.actualPrepayment != null &&
+            event.actualPrepayment! > 0 &&
+            LoanPlanConfig.parseLoanStartDate(event.repaymentDate) != null)
+          event.copyWith(isSettled: true),
+    ];
+    for (final row in _rows) {
+      final amount = _actualPrepayments[row.month];
+      if (amount == null || amount <= 0) continue;
+      candidates.add(
+        RecentPrepayment(
+          id: 'settled-${row.month}',
+          amount: amount,
+          repaymentDate: row.effectivePrepaymentDate ?? '${row.month}-01',
+          isSettled: true,
+        ),
+      );
+    }
+    candidates.sort(
+      (left, right) => right.repaymentDate.compareTo(left.repaymentDate),
+    );
+    return List.unmodifiable(candidates);
+  }
+
+  RecentPrepayment? get latestSettledPrepayment {
+    final candidates = settledPrepaymentCandidates;
+    return candidates.isEmpty ? null : candidates.first;
+  }
+
   /// Loads the last editable state before the first frame is rendered.
   Future<void> loadCachedState() async {
     try {
@@ -93,6 +125,26 @@ class LoanPlannerViewModel extends ChangeNotifier {
 
   void updateConfig(LoanPlanConfig config) {
     _config = config;
+    _recalculate();
+    _persist();
+  }
+
+  /// Records the actual principal for one event without changing other events
+  /// that happen to share the same calendar month.
+  void updateRecentPrepaymentActual(String eventId, double? value) {
+    _config = _config.copyWith(
+      recentPrepayments: _config.recentPrepayments
+          .map(
+            (event) => event.id == eventId
+                ? event.copyWith(
+                    actualPrepayment: value,
+                    clearActualPrepayment: value == null,
+                    isSettled: value != null,
+                  )
+                : event,
+          )
+          .toList(growable: false),
+    );
     _recalculate();
     _persist();
   }

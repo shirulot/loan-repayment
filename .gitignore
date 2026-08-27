@@ -54,3 +54,6 @@ app.*.map.json
 *.aab
 *.app/
 *.zip
+
+# Local device automation reports
+/midscene_run/
