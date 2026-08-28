@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:loan_repayment_manager/domain/models/loan_models.dart';
 import 'package:loan_repayment_manager/domain/services/loan_calculator.dart';
 import 'package:loan_repayment_manager/ui/features/loan/view_models/loan_planner_view_model.dart';
+import 'package:loan_repayment_manager/ui/features/loan/views/loan_calculator_page.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_detail_page.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_calendar_formatters.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_formatters.dart';
@@ -306,6 +307,51 @@ void main() {
 
     expect(find.text('公历\n月份'), findsAtLeastNWidgets(1));
     expect(find.byKey(const ValueKey('plan-row-2026-09')), findsOneWidget);
+  });
+
+  testWidgets('calculator inserts a current home reference', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final viewModel = createViewModel();
+    addTearDown(viewModel.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: LoanCalculatorPage(viewModel: viewModel)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('引用首页数值'), findsOneWidget);
+    final incomeReference = find.byType(ActionChip).first;
+    await tester.ensureVisible(incomeReference);
+    await tester.tap(incomeReference);
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+      '【本月收入】',
+    );
+
+    final expandButton = find.text('展开全部');
+    await tester.ensureVisible(expandButton);
+    await tester.tap(expandButton);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('搜索月份、农历月'), findsOneWidget);
+  });
+
+  testWidgets('mobile navigation hides the my tab', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final viewModel = createViewModel();
+    addTearDown(viewModel.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: LoanPlanPage(viewModel: viewModel)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('我的'), findsNothing);
+    expect(find.byIcon(Icons.person_outline), findsNothing);
   });
 
   testWidgets('amount masking is shared by the home and repayment plan pages', (

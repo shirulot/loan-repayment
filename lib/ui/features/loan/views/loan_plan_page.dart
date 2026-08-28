@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../../../domain/models/loan_models.dart';
 import '../view_models/loan_planner_view_model.dart';
 import 'loan_plan_detail_page.dart';
+import 'loan_calculator_page.dart';
 import 'loan_plan_formatters.dart';
 import 'loan_plan_mobile_layout.dart';
 
@@ -47,17 +48,10 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
   }
 
   void _selectMobileTab(int index) {
-    if (index <= 1) {
-      setState(() {
-        _mobileTabIndex = index;
-        _pendingDetailMonth = null;
-      });
-      return;
-    }
-    const labels = ['首页', '还款计划', '记录', '我的'];
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('${labels[index]}将在后续版本开放。')));
+    setState(() {
+      _mobileTabIndex = index;
+      _pendingDetailMonth = null;
+    });
   }
 
   void _showMobileInfo() {
@@ -122,6 +116,9 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
                       embedded: true,
                       initialMonth: _pendingDetailMonth,
                     );
+                  }
+                  if (_mobileTabIndex == 2) {
+                    return LoanCalculatorPage(viewModel: viewModel);
                   }
                   return MobileLoanPlanLayout(
                     viewModel: viewModel,
@@ -224,10 +221,10 @@ class _MobileNavigationBar extends StatelessWidget {
             label: '还款计划',
           ),
           NavigationDestination(
-            icon: Icon(Icons.article_outlined),
-            label: '记录',
+            icon: Icon(Icons.calculate_outlined),
+            selectedIcon: Icon(Icons.calculate),
+            label: '计算器',
           ),
-          NavigationDestination(icon: Icon(Icons.person_outline), label: '我的'),
         ],
       ),
     );
