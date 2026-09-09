@@ -112,6 +112,10 @@ class LoanCalculator {
                     : scheduledPrepayments.first.repaymentDate,
               ),
             ];
+      final hasMultiplePrepayments = prepayments.length > 1;
+      // 多笔同月交易时，唯一一次月供要延后到第一笔提前还款之后重新计算。
+      final normalPaymentAppliedInPlanRow =
+          !isCalibrationMonth && !hasMultiplePrepayments;
       final appliedPrepayments = _applyPrepayments(
         prepayments: prepayments.isEmpty
             ? <_ScheduledPrepayment>[
@@ -119,16 +123,23 @@ class LoanCalculator {
               ]
             : prepayments,
         commercialBalance: math
-            .max(0.0, commercialOpening - commercialPrincipal)
+            .max(
+              0.0,
+              commercialOpening -
+                  (normalPaymentAppliedInPlanRow ? commercialPrincipal : 0),
+            )
             .toDouble(),
         providentBalance: math
-            .max(0.0, providentOpening - providentPrincipal)
+            .max(
+              0.0,
+              providentOpening -
+                  (normalPaymentAppliedInPlanRow ? providentPrincipal : 0),
+            )
             .toDouble(),
-        remainingTermsForAdditionalPayment: isCalibrationMonth
-            ? remainingTerms
-            : math.max(0, remainingTerms - 1).toInt(),
-        // 非校准月的计划行已经先扣除当月正常月供，后续同月交易不能重复扣除。
-        normalPaymentAlreadyApplied: !isCalibrationMonth,
+        remainingTermsForAdditionalPayment: normalPaymentAppliedInPlanRow
+            ? math.max(0, remainingTerms - 1).toInt()
+            : remainingTerms,
+        normalPaymentAlreadyApplied: normalPaymentAppliedInPlanRow,
         paymentMonthStart: month,
         config: config,
       );
@@ -201,7 +212,7 @@ class LoanCalculator {
       commercialOpening = commercialClosing;
       providentOpening = providentClosing;
       final normalPaymentsApplied =
-          (isCalibrationMonth ? 0 : 1) +
+          (normalPaymentAppliedInPlanRow ? 1 : 0) +
           appliedPrepayments.additionalNormalPayments;
       remainingTerms = math
           .max(0, remainingTerms - normalPaymentsApplied)
@@ -428,8 +439,8 @@ class LoanCalculator {
       final prepayment = prepayments[index];
       var normalPaymentBefore = const _NormalPayment.zero();
       if (index > 0 && !normalPaymentApplied) {
-        // The calibration row has no regular payment of its own, so use the
-        // first later transaction as the single point to apply that payment.
+        // A multi-event row defers its single normal payment until after the
+        // first prepayment, so the later transaction uses the reduced balance.
         normalPaymentApplied = true;
         normalPaymentBefore = _normalPayment(
           commercialOpening: remainingCommercial,

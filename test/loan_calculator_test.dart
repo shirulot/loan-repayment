@@ -645,7 +645,7 @@ void main() {
   );
 
   test(
-    'does not deduct a second monthly payment in a non-calibration month',
+    'recalculates the later monthly payment after an earlier prepayment',
     () {
       const multipleRepaymentConfig = LoanPlanConfig(
         commercialOpeningBalance: 10000,
@@ -669,11 +669,12 @@ void main() {
       final september = rows.firstWhere((row) => row.month == '2026-09');
       final second = september.prepaymentDetails[1];
 
-      // September's row payment is already included before the first event.
+      // One monthly payment is applied after the first prepayment, so its
+      // principal is based on the balance after that earlier prepayment.
       expect(september.commercialPrincipal, closeTo(10000 / 12, 0.001));
-      expect(second.commercialPrincipalBefore, closeTo(0, 0.001));
-      expect(second.commercialPaymentBefore, closeTo(0, 0.001));
-      expect(september.totalBalance, closeTo(6166.6667, 0.001));
+      expect(second.commercialPrincipalBefore, closeTo(750, 0.001));
+      expect(second.commercialPaymentBefore, closeTo(1023.75, 0.001));
+      expect(september.totalBalance, closeTo(6250, 0.001));
     },
   );
 

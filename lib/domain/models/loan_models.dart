@@ -481,10 +481,10 @@ class LoanPrepaymentDetail {
   final double commercialClosing;
   final double providentClosing;
 
-  /// The extra normal-payment components inserted before this transaction
+  /// The normal-payment components applied immediately before this transaction
   /// when multiple prepayments share one calendar month. The first transaction
-  /// in a month keeps these values at zero because its row payment is handled
-  /// separately.
+  /// keeps these values at zero; the single monthly payment is recalculated
+  /// after the earlier prepayment and attached to a later transaction.
   final double commercialPrincipalBefore;
   final double commercialInterestBefore;
   final double commercialPaymentBefore;
