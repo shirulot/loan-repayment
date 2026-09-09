@@ -430,19 +430,37 @@ class LoanCalculator {
     var interestDueNow = 0.0;
     var paymentRemainingTerms = remainingTermsForAdditionalPayment;
     var additionalNormalPayments = 0;
-    // A calendar month may reduce principal through normal payment only once.
-    var normalPaymentApplied = normalPaymentAlreadyApplied;
-    // Later transaction rows retain the recalculated payment information for
-    // display, but only the first transaction applies it to the balance.
-    var normalPaymentForNextDetail = const _NormalPayment.zero();
+    // Preview balances only accumulate prepayments. They let every detail
+    // show the newly reduced monthly payment without applying it repeatedly.
+    var previewCommercial = commercialBalance;
+    var previewProvident = providentBalance;
+    final previewPaymentMonth = _monthAt(
+      LoanPlanConfig.parseLoanStartDate('$paymentMonthStart-01')!,
+      1,
+    );
     final dates = <String>[];
     final details = <LoanPrepaymentDetail>[];
 
     for (var index = 0; index < prepayments.length; index++) {
       final prepayment = prepayments[index];
-      var normalPaymentBefore = index == 0
-          ? const _NormalPayment.zero()
-          : normalPaymentForNextDetail;
+      var normalPaymentBefore = const _NormalPayment.zero();
+      final previewUsed = math
+          .min(
+            math.max(0.0, prepayment.amount),
+            previewCommercial + previewProvident,
+          )
+          .toDouble();
+      final previewCommercialPart = math
+          .min(previewUsed, previewCommercial)
+          .toDouble();
+      final previewProvidentPart = math
+          .min(
+            math.max(0.0, previewUsed - previewCommercialPart),
+            previewProvident,
+          )
+          .toDouble();
+      previewCommercial -= previewCommercialPart;
+      previewProvident -= previewProvidentPart;
       final used = math
           .min(
             math.max(0.0, prepayment.amount),
@@ -458,51 +476,36 @@ class LoanCalculator {
       commercialPrepayment += commercialPart;
       providentPrepayment += providentPart;
 
-      if (index == 0 && prepayments.length > 1 && !normalPaymentApplied) {
-        // The first transaction owns the month's only normal payment. Calculate
-        // it after that transaction's prepayment so later payments use the
-        // reduced balance without deducting another payment for each event.
-        normalPaymentApplied = true;
+      if (prepayments.length > 1 && !normalPaymentAlreadyApplied) {
+        // Each detail is recalculated after its own cumulative prepayment.
+        // Only the first detail applies that recalculated payment to balance.
         normalPaymentBefore = _normalPayment(
-          commercialOpening: remainingCommercial,
-          providentOpening: remainingProvident,
+          commercialOpening: previewCommercial,
+          providentOpening: previewProvident,
           remainingTerms: paymentRemainingTerms,
-          paymentMonth: _monthAt(
-            LoanPlanConfig.parseLoanStartDate('$paymentMonthStart-01')!,
-            index + 1,
-          ),
+          paymentMonth: previewPaymentMonth,
           config: config,
         );
-        remainingCommercial = math
-            .max(
-              0.0,
-              remainingCommercial - normalPaymentBefore.commercialPrincipal,
-            )
-            .toDouble();
-        remainingProvident = math
-            .max(
-              0.0,
-              remainingProvident - normalPaymentBefore.providentPrincipal,
-            )
-            .toDouble();
-        if (normalPaymentBefore.hasPrincipal) {
-          additionalNormalPayments++;
-          paymentRemainingTerms = math
-              .max(0, paymentRemainingTerms - 1)
-              .toInt();
+        if (index == 0) {
+          remainingCommercial = math
+              .max(
+                0.0,
+                remainingCommercial - normalPaymentBefore.commercialPrincipal,
+              )
+              .toDouble();
+          remainingProvident = math
+              .max(
+                0.0,
+                remainingProvident - normalPaymentBefore.providentPrincipal,
+              )
+              .toDouble();
+          if (normalPaymentBefore.hasPrincipal) {
+            additionalNormalPayments++;
+            paymentRemainingTerms = math
+                .max(0, paymentRemainingTerms - 1)
+                .toInt();
+          }
         }
-        normalPaymentForNextDetail = normalPaymentBefore;
-      } else if (index > 0 && index < prepayments.length - 1) {
-        normalPaymentForNextDetail = _normalPayment(
-          commercialOpening: remainingCommercial,
-          providentOpening: remainingProvident,
-          remainingTerms: paymentRemainingTerms,
-          paymentMonth: _monthAt(
-            LoanPlanConfig.parseLoanStartDate('$paymentMonthStart-01')!,
-            index + 1,
-          ),
-          config: config,
-        );
       }
 
       final date = prepayment.repaymentDate;

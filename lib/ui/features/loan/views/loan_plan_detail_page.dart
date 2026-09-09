@@ -751,9 +751,8 @@ class _CompactPlanTable extends StatelessWidget {
   }) {
     final row = displayRow.row;
     final prepayment = displayRow.prepayment;
-    // An expanded transaction uses its own normal-payment step instead of
-    // repeating the outer calendar row's payment values. Later same-month
-    // transactions do not display a second normal payment.
+    // An expanded transaction shows its own post-prepayment monthly-payment
+    // preview instead of repeating the outer calendar row's payment values.
     final paymentBefore = prepayment?.hasNormalPaymentBefore == true
         ? prepayment
         : null;

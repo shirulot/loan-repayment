@@ -585,7 +585,7 @@ void main() {
   });
 
   test(
-    'assigns one recalculated payment to the first same-month prepayment',
+    'recalculates each same-month detail from its cumulative prepayments',
     () {
       const multipleRepaymentConfig = LoanPlanConfig(
         commercialOpeningBalance: 10000,
@@ -631,8 +631,11 @@ void main() {
       expect(first.commercialPrincipalBefore, closeTo(750, 0.001));
       expect(first.commercialInterestBefore, closeTo(282.875, 0.001));
       expect(first.commercialClosing, closeTo(8250, 0.001));
-      expect(second.commercialPrincipalBefore, closeTo(750, 0.001));
-      expect(second.commercialPaymentBefore, closeTo(1032.875, 0.001));
+      expect(second.commercialPrincipalBefore, closeTo(7000 / 11, 0.001));
+      expect(
+        second.commercialPaymentBefore,
+        lessThan(first.commercialPaymentBefore),
+      );
       expect(second.commercialClosing, closeTo(6250, 0.001));
       expect(rows[1].remainingTerms, 11);
       expect(rows[1].commercialInterest, closeTo(196.4409722, 0.001));
@@ -643,7 +646,7 @@ void main() {
     },
   );
 
-  test('assigns the recalculated monthly payment to the first prepayment', () {
+  test('keeps the first recalculated payment as the only applied payment', () {
     const multipleRepaymentConfig = LoanPlanConfig(
       commercialOpeningBalance: 10000,
       commercialAnnualRate: 0.365,
@@ -667,13 +670,16 @@ void main() {
     final first = september.prepaymentDetails.first;
     final second = september.prepaymentDetails[1];
 
-    // The first transaction owns the one monthly payment, recalculated from
-    // the balance after its prepayment; later transactions do not repeat it.
+    // The first transaction owns the one applied payment. Every later detail
+    // recalculates from cumulative prepayments without deducting it again.
     expect(september.commercialPrincipal, closeTo(10000 / 12, 0.001));
     expect(first.commercialPrincipalBefore, closeTo(750, 0.001));
     expect(first.commercialPaymentBefore, closeTo(1023.75, 0.001));
-    expect(second.commercialPrincipalBefore, closeTo(750, 0.001));
-    expect(second.commercialPaymentBefore, closeTo(1023.75, 0.001));
+    expect(second.commercialPrincipalBefore, closeTo(7000 / 11, 0.001));
+    expect(
+      second.commercialPaymentBefore,
+      lessThan(first.commercialPaymentBefore),
+    );
     expect(first.commercialClosing, closeTo(8250, 0.001));
     expect(september.totalBalance, closeTo(6250, 0.001));
   });
@@ -714,11 +720,11 @@ void main() {
       );
       expect(
         august.prepaymentDetails[1].commercialPrincipalBefore,
-        closeTo(750, 0.001),
+        closeTo(7000 / 11, 0.001),
       );
       expect(
         august.prepaymentDetails[2].commercialPrincipalBefore,
-        closeTo(6250 / 11, 0.001),
+        closeTo(4000 / 11, 0.001),
       );
       expect(august.totalBalance, closeTo(3250, 0.001));
     },
@@ -754,8 +760,8 @@ void main() {
     expect(first.providentPrincipalBefore, closeTo(450, 0.001));
     expect(first.providentInterestBefore, closeTo(22.5, 0.001));
     expect(second.commercialPrincipalBefore, closeTo(0, 0.001));
-    expect(second.providentPrincipalBefore, closeTo(450, 0.001));
-    expect(second.providentInterestBefore, closeTo(22.5, 0.001));
+    expect(second.providentPrincipalBefore, closeTo(4000 / 9, 0.001));
+    expect(second.providentInterestBefore, closeTo(20, 0.001));
     expect(first.commercialClosing, closeTo(0, 0.001));
     expect(first.providentClosing, closeTo(4050, 0.001));
     expect(second.commercialClosing, closeTo(0, 0.001));
