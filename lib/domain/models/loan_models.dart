@@ -423,7 +423,7 @@ class LoanPlanRow {
   /// Every dated prepayment used by this month, in actual calculation order.
   final List<String> prepaymentDates;
 
-  /// 明细表按该列表展开同月多笔提前还款，而月供仍只计算一次。
+  /// 明细表按该列表展开同月多笔提前还款；从第二笔起会记录插入的正常月供。
   final List<LoanPrepaymentDetail> prepaymentDetails;
 
   /// 提前还款日当天应付的利息，不计入用户输入的提前本金。
@@ -460,6 +460,12 @@ class LoanPrepaymentDetail {
     required this.nextMonthDeferredInterest,
     required this.commercialClosing,
     required this.providentClosing,
+    this.commercialPrincipalBefore = 0,
+    this.commercialInterestBefore = 0,
+    this.commercialPaymentBefore = 0,
+    this.providentPrincipalBefore = 0,
+    this.providentInterestBefore = 0,
+    this.providentPaymentBefore = 0,
   });
 
   final double amount;
@@ -473,6 +479,22 @@ class LoanPrepaymentDetail {
   /// Balance immediately after this transaction, used by an expanded plan row.
   final double commercialClosing;
   final double providentClosing;
+
+  /// The extra normal-payment components inserted before this transaction
+  /// when multiple prepayments share one calendar month. The first transaction
+  /// in a month keeps these values at zero because its row payment is handled
+  /// separately.
+  final double commercialPrincipalBefore;
+  final double commercialInterestBefore;
+  final double commercialPaymentBefore;
+  final double providentPrincipalBefore;
+  final double providentInterestBefore;
+  final double providentPaymentBefore;
+
+  double get normalPaymentBefore =>
+      commercialPaymentBefore + providentPaymentBefore;
+
+  bool get hasNormalPaymentBefore => normalPaymentBefore > 0.000001;
 
   double get totalBalance => commercialClosing + providentClosing;
 }

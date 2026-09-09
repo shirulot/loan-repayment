@@ -11,8 +11,10 @@ class _NoopCacheService extends LoanCacheService {
   @override
   Future<void> save(
     LoanPlanConfig config,
-    Map<String, double?> actualPrepayments,
-  ) async {}
+    Map<String, double?> actualPrepayments, {
+    String calculatorExpression = '',
+    List<double> temporaryCalculatorResults = const <double>[],
+  }) async {}
 }
 
 void main() {
@@ -61,6 +63,40 @@ void main() {
       rows[2].commercialOpening,
       closeTo(rows[1].commercialClosing, 0.001),
     );
+  });
+
+  test('keeps same-month actual repayments separate by their dates', () {
+    const eventConfig = LoanPlanConfig(
+      commercialOpeningBalance: 100000,
+      remainingTerms: 100,
+      recentPrepayments: [
+        RecentPrepayment(
+          id: 'september-early',
+          amount: 17500,
+          actualPrepayment: 17500,
+          repaymentDate: '2026-09-05',
+          isSettled: true,
+        ),
+        RecentPrepayment(
+          id: 'september-late',
+          amount: 31000,
+          actualPrepayment: 31000,
+          repaymentDate: '2026-09-20',
+          isSettled: true,
+        ),
+      ],
+    );
+
+    final rows = LoanCalculator(
+      currentDate: DateTime(2026, 9, 21),
+    ).calculate(eventConfig, const <String, double?>{});
+
+    final september = rows.firstWhere((row) => row.month == '2026-09');
+    expect(september.actualPrepayment, 48500);
+    expect(september.prepaymentDetails, hasLength(2));
+    expect(september.prepaymentDetails[0].repaymentDate, '2026-09-05');
+    expect(september.prepaymentDetails[1].repaymentDate, '2026-09-20');
+    expect(september.prepaymentDetails[1].actualPrepayment, 31000);
   });
 
   test('calculates every commercial payment on the 360-day basis', () {
@@ -239,6 +275,28 @@ void main() {
     viewModel.dispose();
   });
 
+  test('restores the calculator expression and saved results from cache', () {
+    final cached = LoanCachedState.fromJson({
+      'config': config.toJson(),
+      'actualPrepayments': const <String, double>{},
+      'calculatorExpression': '1 + 2',
+      'temporaryCalculatorResults': [3, 42.5],
+    });
+    final viewModel = LoanPlannerViewModel(
+      calculator: calculator,
+      cacheService: const _NoopCacheService(),
+    );
+
+    viewModel.restoreImportedState(cached);
+
+    expect(viewModel.calculatorExpression, '1 + 2');
+    expect(viewModel.temporaryCalculatorReferences.map((item) => item.value), [
+      3,
+      42.5,
+    ]);
+    viewModel.dispose();
+  });
+
   test('calculates remaining terms from start date and total years', () {
     final durationConfig = config.copyWith(
       loanStartDate: '2020-01-15',
@@ -371,6 +429,132 @@ void main() {
     expect(rows[2].nextMonthBasePaymentReduction, closeTo(22.8125, 0.001));
   });
 
+  test('does not increase the next provident payment after a prepayment', () {
+    const providentConfig = LoanPlanConfig(
+      providentOpeningBalance: 500000,
+      providentAnnualRate: 0.026,
+      remainingTerms: 200,
+      recentPrepayments: [
+        RecentPrepayment(
+          id: 'august-provident',
+          amount: 10000,
+          repaymentDate: '2026-08-04',
+        ),
+      ],
+    );
+
+    final rows = calculator.calculate(providentConfig, {});
+
+    expect(rows[1].providentPayment, closeTo(3511.6667, 0.001));
+    expect(rows[2].providentPayment, lessThan(rows[1].providentPayment));
+    expect(rows[2].providentPayment, closeTo(3506.3580, 0.001));
+  });
+
+  test(
+    'keeps October commercial and total expected payments below September',
+    () {
+      final rows = calculator.calculate(config, {'2026-08': 17500});
+
+      // 首个正常月不减期数；进入下一期后，余额和期数同步递推。
+      expect(rows[1].remainingTerms, 200);
+      expect(rows[2].remainingTerms, 199);
+      expect(rows[2].commercialPayment, lessThan(rows[1].commercialPayment));
+      expect(rows[2].totalPayment, lessThan(rows[1].totalPayment));
+    },
+  );
+
+  test('keeps the current balance until this month\'s repayment date', () {
+    const datedConfig = LoanPlanConfig(
+      commercialOpeningBalance: 100000,
+      remainingTerms: 100,
+      recentPrepayments: [
+        RecentPrepayment(
+          id: 'future-august',
+          amount: 10000,
+          repaymentDate: '2026-08-25',
+        ),
+      ],
+    );
+    final beforeDue = LoanPlannerViewModel(
+      calculator: LoanCalculator(currentDate: DateTime(2026, 8, 19)),
+      initialConfig: datedConfig,
+      cacheService: const _NoopCacheService(),
+    );
+    final onDue = LoanPlannerViewModel(
+      calculator: LoanCalculator(currentDate: DateTime(2026, 8, 25)),
+      initialConfig: datedConfig,
+      cacheService: const _NoopCacheService(),
+    );
+
+    expect(beforeDue.currentCommercialBalance, 100000);
+    expect(onDue.currentCommercialBalance, 90000);
+    beforeDue.dispose();
+    onDue.dispose();
+  });
+
+  test('keeps confirmed prior repayment months in the generated history', () {
+    const historyConfig = LoanPlanConfig(
+      commercialOpeningBalance: 100000,
+      remainingTerms: 100,
+      recentPrepayments: [
+        RecentPrepayment(
+          id: 'august-settled',
+          amount: 10000,
+          repaymentDate: '2026-08-19',
+        ),
+      ],
+    );
+    final septemberCalculator = LoanCalculator(
+      currentDate: DateTime(2026, 9, 1),
+    );
+
+    final rows = septemberCalculator.calculate(historyConfig, {
+      '2026-08': 10000,
+    });
+
+    expect(rows[0].month, '2026-08');
+    expect(rows[0].commercialClosing, 90000);
+    expect(rows[1].month, '2026-09');
+    expect(rows[1].commercialOpening, 90000);
+    expect(rows[1].commercialPayment, closeTo(900, 0.001));
+  });
+
+  test(
+    'keeps a fully settled month as history after the calendar advances',
+    () {
+      const payoffConfig = LoanPlanConfig(
+        commercialOpeningBalance: 10000,
+        remainingTerms: 12,
+        recentPrepayments: [
+          RecentPrepayment(
+            id: 'august-payoff',
+            amount: 10000,
+            repaymentDate: '2026-08-19',
+          ),
+        ],
+      );
+      final septemberCalculator = LoanCalculator(
+        currentDate: DateTime(2026, 9, 1),
+      );
+
+      final rows = septemberCalculator.calculate(payoffConfig, {
+        '2026-08': 10000,
+      });
+      final viewModel = LoanPlannerViewModel(
+        calculator: septemberCalculator,
+        initialConfig: payoffConfig,
+        cacheService: const _NoopCacheService(),
+      )..updateActualPrepayment('2026-08', 10000);
+
+      expect(rows, hasLength(1));
+      expect(rows.single.month, '2026-08');
+      expect(rows.single.usedPrepayment, 10000);
+      expect(rows.single.commercialClosing, 0);
+      expect(viewModel.currentCommercialBalance, 0);
+      viewModel.dispose();
+    },
+  );
+
   test('keeps a settlement-interest row after a dated final prepayment', () {
     const payoffConfig = LoanPlanConfig(
       commercialOpeningBalance: 10000,
@@ -400,47 +584,108 @@ void main() {
     expect(rows[1].commercialInterest, closeTo(265.35, 0.001));
   });
 
-  test('keeps multiple dated repayments independent in one month', () {
-    const multipleRepaymentConfig = LoanPlanConfig(
-      commercialOpeningBalance: 10000,
-      commercialAnnualRate: 0.365,
-      remainingTerms: 12,
+  test(
+    'applies another normal payment before a later same-month prepayment',
+    () {
+      const multipleRepaymentConfig = LoanPlanConfig(
+        commercialOpeningBalance: 10000,
+        commercialAnnualRate: 0.365,
+        remainingTerms: 12,
+        recentPrepayments: [
+          RecentPrepayment(
+            id: 'august-4',
+            amount: 1000,
+            repaymentDate: '2026-08-04',
+          ),
+          RecentPrepayment(
+            id: 'august-20',
+            amount: 2000,
+            repaymentDate: '2026-08-20',
+          ),
+        ],
+      );
+
+      final rows = calculator.calculate(multipleRepaymentConfig, {});
+
+      expect(rows.first.expectedPrepayment, 3000);
+      expect(rows.first.prepaymentDetails, hasLength(2));
+      expect(
+        rows.first.prepaymentDetails.first.interestDueNow,
+        closeTo(4.0555556, 0.001),
+      );
+      expect(
+        rows.first.prepaymentDetails.last.interestDueNow,
+        closeTo(40.5555556, 0.001),
+      );
+      expect(rows.first.prepaymentInterestDueNow, closeTo(44.6111111, 0.001));
+      expect(
+        rows.first.prepaymentDetails.first.nextMonthDeferredInterest,
+        closeTo(0, 0.001),
+      );
+      expect(
+        rows.first.prepaymentDetails.last.nextMonthDeferredInterest,
+        closeTo(0, 0.001),
+      );
+      expect(
+        rows.first.prepaymentDetails.last.commercialPrincipalBefore,
+        closeTo(750, 0.001),
+      );
+      expect(
+        rows.first.prepaymentDetails.last.commercialInterestBefore,
+        closeTo(282.875, 0.001),
+      );
+      expect(rows.first.prepaymentDetails.last.commercialClosing, 6250);
+      expect(rows[1].remainingTerms, 11);
+      expect(rows[1].commercialInterest, closeTo(196.4409722, 0.001));
+      expect(
+        rows[1].nextMonthBasePaymentReduction,
+        closeTo(379.2140152, 0.001),
+      );
+    },
+  );
+
+  test('applies the inserted payment to both loan balances', () {
+    const multipleLoanConfig = LoanPlanConfig(
+      commercialOpeningBalance: 1000,
+      providentOpeningBalance: 5000,
+      commercialAnnualRate: 0.12,
+      providentAnnualRate: 0.06,
+      remainingTerms: 10,
       recentPrepayments: [
         RecentPrepayment(
-          id: 'august-4',
-          amount: 1000,
+          id: 'august-first',
+          amount: 500,
           repaymentDate: '2026-08-04',
         ),
         RecentPrepayment(
-          id: 'august-20',
-          amount: 2000,
+          id: 'august-second',
+          amount: 500,
           repaymentDate: '2026-08-20',
         ),
       ],
     );
 
-    final rows = calculator.calculate(multipleRepaymentConfig, {});
+    final rows = calculator.calculate(multipleLoanConfig, {});
+    final second = rows.first.prepaymentDetails[1];
 
-    expect(rows.first.expectedPrepayment, 3000);
-    expect(rows.first.prepaymentDetails, hasLength(2));
-    expect(
-      rows.first.prepaymentDetails.first.interestDueNow,
-      closeTo(4.0555556, 0.001),
+    expect(second.commercialPrincipalBefore, closeTo(50, 0.001));
+    expect(second.commercialInterestBefore, closeTo(5.1666667, 0.001));
+    expect(second.providentPrincipalBefore, closeTo(500, 0.001));
+    expect(second.providentInterestBefore, closeTo(25, 0.001));
+    expect(second.commercialClosing, closeTo(0, 0.001));
+    expect(second.providentClosing, closeTo(4450, 0.001));
+    expect(rows[1].commercialOpening, closeTo(0, 0.001));
+    expect(rows[1].providentOpening, closeTo(4450, 0.001));
+    expect(rows[1].remainingTerms, 9);
+
+    final viewModel = LoanPlannerViewModel(
+      calculator: LoanCalculator(currentDate: DateTime(2026, 8, 21)),
+      initialConfig: multipleLoanConfig,
+      cacheService: const _NoopCacheService(),
     );
-    expect(
-      rows.first.prepaymentDetails.last.interestDueNow,
-      closeTo(40.5555556, 0.001),
-    );
-    expect(rows.first.prepaymentInterestDueNow, closeTo(44.6111111, 0.001));
-    expect(
-      rows.first.prepaymentDetails.first.nextMonthDeferredInterest,
-      closeTo(0, 0.001),
-    );
-    expect(
-      rows.first.prepaymentDetails.last.nextMonthDeferredInterest,
-      closeTo(0, 0.001),
-    );
-    expect(rows[1].commercialInterest, closeTo(220.0138889, 0.001));
+    expect(viewModel.currentCommercialBalance, closeTo(0, 0.001));
+    expect(viewModel.currentProvidentBalance, closeTo(4450, 0.001));
+    viewModel.dispose();
   });
 
   test(

@@ -21,9 +21,21 @@ class _LoanCalculatorPageState extends State<LoanCalculatorPage> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    _expressionController.text = widget.viewModel.calculatorExpression;
+    _expressionController.addListener(_persistExpression);
+  }
+
+  @override
   void dispose() {
+    _expressionController.removeListener(_persistExpression);
     _expressionController.dispose();
     super.dispose();
+  }
+
+  void _persistExpression() {
+    widget.viewModel.updateCalculatorExpression(_expressionController.text);
   }
 
   void _append(String value) {

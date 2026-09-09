@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:lunar/lunar.dart';
@@ -44,6 +45,7 @@ class LoanPlannerViewModel extends ChangeNotifier {
   bool _amountsMasked = false;
   final List<CalculatorReference> _temporaryCalculatorReferences = [];
   var _nextTemporaryCalculatorReference = 1;
+  var _calculatorExpression = '';
 
   LoanPlanConfig get config => _config;
   List<LoanPlanRow> get rows => List.unmodifiable(_rows);
@@ -53,8 +55,10 @@ class LoanPlannerViewModel extends ChangeNotifier {
   /// 仅用于当前界面展示，避免将隐私显示偏好写入贷款数据缓存。
   bool get amountsMasked => _amountsMasked;
 
-  int get calculatedRemainingTerms =>
-      _config.remainingTermsAt(_calculator.currentDate ?? DateTime.now());
+  /// 向界面暴露与还款计划一致的计算日期，避免预览使用另一套时钟。
+  DateTime get calculationDate => _calculator.calculationDate;
+
+  int get calculatedRemainingTerms => _config.remainingTermsAt(calculationDate);
 
   String get expectedFinishMonth {
     final row = _rows.firstWhere(
@@ -67,19 +71,91 @@ class LoanPlannerViewModel extends ChangeNotifier {
   int get actualOverrideCount =>
       _actualPrepayments.values.where((value) => value != null).length;
 
+  LoanPlanRow? get _currentPlanRow {
+    final currentMonth = _calculator.monthAt(0);
+    for (final row in _rows) {
+      if (row.month == currentMonth) return row;
+    }
+    return null;
+  }
+
+  LoanPlanRow? get _nextPlanRow {
+    final nextMonth = _calculator.monthAt(1);
+    for (final row in _rows) {
+      if (row.month == nextMonth) return row;
+    }
+    return null;
+  }
+
   /// 首行是余额校准月，当前月供展示紧随其后的银行实扣月供。
   double get currentMonthlyPayment {
-    if (_rows.length > 1) return _rows[1].totalPayment;
-    return _rows.isEmpty ? 0 : _rows.first.totalPayment;
+    final current = _currentPlanRow;
+    // 首行仅校准当前余额时，首页仍展示紧随其后的首笔银行月供。
+    if (current != null && identical(current, _rows.first)) {
+      return _nextPlanRow?.totalPayment ?? current.totalPayment;
+    }
+    return current?.totalPayment ?? 0;
   }
 
   /// Uses the same normal-payment row as [currentMonthlyPayment].
   double get currentAvailablePrepayment {
-    if (_rows.length > 1) return _rows[1].availableFunds;
+    final current = _currentPlanRow;
+    if (current != null && !identical(current, _rows.first)) {
+      return current.availableFunds;
+    }
+    if (_nextPlanRow != null) return _nextPlanRow!.availableFunds;
     return _config.monthlySalary -
         currentMonthlyPayment -
         _config.monthlyLivingCost +
         _config.monthlyExtraIncome;
+  }
+
+  /// 当前余额仅扣除已实际录入或日期已到的提前还款，不预扣本月未来预约。
+  double get currentCommercialBalance => _currentBalances().$1;
+
+  /// 当前余额仅扣除已实际录入或日期已到的提前还款，不预扣本月未来预约。
+  double get currentProvidentBalance => _currentBalances().$2;
+
+  (double, double) _currentBalances() {
+    final currentRow = _currentPlanRow;
+    if (currentRow == null) {
+      // A prior month may have fully settled both loans. Keep its history row,
+      // but never restore the editable opening principal as a current balance.
+      if (_rows.isNotEmpty && _rows.last.totalBalance < 0.01) {
+        return (0, 0);
+      }
+      return (
+        _config.commercialOpeningBalance,
+        _config.providentOpeningBalance,
+      );
+    }
+    var commercial = currentRow.commercialOpening;
+    var provident = currentRow.providentOpening;
+
+    final today = _calculator.calculationDate;
+    for (final detail in currentRow.prepaymentDetails) {
+      final date = LoanPlanConfig.parseLoanStartDate(
+        detail.repaymentDate ?? '',
+      );
+      final isActual = detail.actualPrepayment != null;
+      final isDue = date != null && !date.isAfter(today);
+      if (!isActual && !isDue) continue;
+
+      // A later same-month transaction may have an inserted normal payment
+      // before it; apply that principal while keeping future events excluded.
+      commercial = math
+          .max(0.0, commercial - detail.commercialPrincipalBefore)
+          .toDouble();
+      provident = math
+          .max(0.0, provident - detail.providentPrincipalBefore)
+          .toDouble();
+
+      // The calculator applies prepayments to commercial principal first.
+      final commercialPart = detail.amount.clamp(0.0, commercial).toDouble();
+      commercial -= commercialPart;
+      provident -= (detail.amount - commercialPart).clamp(0.0, provident);
+    }
+    return (commercial, provident);
   }
 
   List<String> get fixedPrepaymentMonths =>
@@ -94,7 +170,14 @@ class LoanPlannerViewModel extends ChangeNotifier {
             LoanPlanConfig.parseLoanStartDate(event.repaymentDate) != null)
           event.copyWith(isSettled: true),
     ];
+    // Old backups recorded a single actual amount for a whole month. Keep them
+    // readable, but never use this fallback for event-based repayment data:
+    // multiple transactions in one month must be ordered by their dates.
+    final eventMonths = candidates
+        .map((event) => event.repaymentDate.substring(0, 7))
+        .toSet();
     for (final row in _rows) {
+      if (eventMonths.contains(row.month)) continue;
       final amount = _actualPrepayments[row.month];
       if (amount == null || amount <= 0) continue;
       candidates.add(
@@ -117,9 +200,38 @@ class LoanPlannerViewModel extends ChangeNotifier {
     return candidates.isEmpty ? null : candidates.first;
   }
 
+  /// The home summary follows the repayment table: use the latest dated entry
+  /// that is not later than today, whether it is planned or already settled.
+  RecentPrepayment? get latestPrepaymentOnOrBeforeToday {
+    final today = DateTime(
+      calculationDate.year,
+      calculationDate.month,
+      calculationDate.day,
+    );
+    RecentPrepayment? latest;
+    DateTime? latestDate;
+    for (final row in _rows) {
+      for (final detail in row.prepaymentDetails) {
+        final date = LoanPlanConfig.parseLoanStartDate(
+          detail.repaymentDate ?? '',
+        );
+        if (date == null || date.isAfter(today)) continue;
+        if (latestDate != null && !date.isAfter(latestDate)) continue;
+        latestDate = date;
+        latest = RecentPrepayment(
+          id: detail.eventId ?? '${row.month}-${detail.repaymentDate}',
+          amount: detail.expectedAmount,
+          actualPrepayment: detail.actualPrepayment,
+          repaymentDate: detail.repaymentDate!,
+          isSettled: detail.actualPrepayment != null,
+        );
+      }
+    }
+    return latest;
+  }
+
   /// Numeric values shown on the home page, plus its expandable parameters.
   List<CalculatorReference> get calculatorReferences {
-    final firstRow = _rows.isEmpty ? null : _rows.first;
     return List.unmodifiable([
       CalculatorReference(
         label: '本月收入',
@@ -148,17 +260,11 @@ class LoanPlannerViewModel extends ChangeNotifier {
       ),
       CalculatorReference(
         label: '当前贷款余额',
-        value: firstRow?.totalBalance ?? 0,
+        value: currentCommercialBalance + currentProvidentBalance,
         isHomeSummary: true,
       ),
-      CalculatorReference(
-        label: '当前商贷余额',
-        value: firstRow?.commercialClosing ?? _config.commercialOpeningBalance,
-      ),
-      CalculatorReference(
-        label: '当前公积金余额',
-        value: firstRow?.providentClosing ?? _config.providentOpeningBalance,
-      ),
+      CalculatorReference(label: '当前商贷余额', value: currentCommercialBalance),
+      CalculatorReference(label: '当前公积金余额', value: currentProvidentBalance),
       CalculatorReference(
         label: '初期商贷本金',
         value: _config.commercialOpeningBalance,
@@ -280,10 +386,17 @@ class LoanPlannerViewModel extends ChangeNotifier {
     '十二月',
   ][month];
 
-  /// Calculator-only results live for this [LoanPlannerViewModel] instance.
-  /// They intentionally do not call [_persist], so app restart drops them.
   List<CalculatorReference> get temporaryCalculatorReferences =>
       List.unmodifiable(_temporaryCalculatorReferences);
+
+  String get calculatorExpression => _calculatorExpression;
+
+  /// Persists the unfinished calculator expression independently of loan edits.
+  void updateCalculatorExpression(String value) {
+    if (_calculatorExpression == value) return;
+    _calculatorExpression = value;
+    _persist();
+  }
 
   void saveTemporaryCalculatorResult(double value) {
     _temporaryCalculatorReferences.add(
@@ -292,12 +405,14 @@ class LoanPlannerViewModel extends ChangeNotifier {
         value: value,
       ),
     );
+    _persist();
     notifyListeners();
   }
 
   void clearTemporaryCalculatorReferences() {
     if (_temporaryCalculatorReferences.isEmpty) return;
     _temporaryCalculatorReferences.clear();
+    _persist();
     notifyListeners();
   }
 
@@ -310,6 +425,10 @@ class LoanPlannerViewModel extends ChangeNotifier {
         _actualPrepayments
           ..clear()
           ..addAll(cachedState.actualPrepayments);
+        _calculatorExpression = cachedState.calculatorExpression;
+        _restoreTemporaryCalculatorResults(
+          cachedState.temporaryCalculatorResults,
+        );
       }
     } catch (_) {
       // A missing or unavailable cache falls back to the default model.
@@ -359,6 +478,8 @@ class LoanPlannerViewModel extends ChangeNotifier {
     _actualPrepayments
       ..clear()
       ..addAll(state.actualPrepayments);
+    _calculatorExpression = state.calculatorExpression;
+    _restoreTemporaryCalculatorResults(state.temporaryCalculatorResults);
     _recalculate();
     _persist();
   }
@@ -374,13 +495,35 @@ class LoanPlannerViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _restoreTemporaryCalculatorResults(List<double> results) {
+    _temporaryCalculatorReferences
+      ..clear()
+      ..addAll(
+        results.indexed.map(
+          (item) =>
+              CalculatorReference(label: '暂存结果 ${item.$1 + 1}', value: item.$2),
+        ),
+      );
+    _nextTemporaryCalculatorReference =
+        _temporaryCalculatorReferences.length + 1;
+  }
+
   void _persist() {
     final config = _config;
     final actualPrepayments = Map<String, double?>.from(_actualPrepayments);
+    final calculatorExpression = _calculatorExpression;
+    final temporaryCalculatorResults = _temporaryCalculatorReferences
+        .map((reference) => reference.value)
+        .toList(growable: false);
     // Queue writes so rapid edits cannot finish out of order and restore stale data.
     _pendingSave = _pendingSave.then((_) async {
       try {
-        await _cacheService.save(config, actualPrepayments);
+        await _cacheService.save(
+          config,
+          actualPrepayments,
+          calculatorExpression: calculatorExpression,
+          temporaryCalculatorResults: temporaryCalculatorResults,
+        );
       } catch (_) {
         // A cache failure must not interrupt editing or calculation.
       }

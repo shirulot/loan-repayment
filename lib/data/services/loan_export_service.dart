@@ -196,6 +196,12 @@ td{padding:6px;border:1px solid #d9e2f3;text-align:right} td:first-child{text-al
               'nextMonthDeferredInterest': detail.nextMonthDeferredInterest,
               'commercialClosing': detail.commercialClosing,
               'providentClosing': detail.providentClosing,
+              'commercialPrincipalBefore': detail.commercialPrincipalBefore,
+              'commercialInterestBefore': detail.commercialInterestBefore,
+              'commercialPaymentBefore': detail.commercialPaymentBefore,
+              'providentPrincipalBefore': detail.providentPrincipalBefore,
+              'providentInterestBefore': detail.providentInterestBefore,
+              'providentPaymentBefore': detail.providentPaymentBefore,
             },
           )
           .toList(growable: false),

@@ -7,6 +7,7 @@ import '../../../../domain/models/loan_models.dart';
 import '../../../theme/loan_palette.dart';
 import '../view_models/loan_planner_view_model.dart';
 import 'loan_plan_formatters.dart';
+import 'loan_plan_gesture_detector.dart';
 
 /// Compact phone layout that keeps the repayment preview above the fold.
 class MobileLoanPlanLayout extends StatefulWidget {
@@ -37,6 +38,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
   late List<RecentPrepayment> _recentPrepayments;
   Timer? _recentPrepaymentSyncTimer;
   final Set<String> _expandedSections = <String>{};
+  String? _highlightedPreviewMonth;
 
   @override
   void initState() {
@@ -101,11 +103,9 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
       'monthlySalary': editableNumber(config.monthlySalary),
       'monthlyExtraIncome': editableNumber(config.monthlyExtraIncome),
       'monthlyLivingCost': editableNumber(config.monthlyLivingCost),
-      for (var index = 0; index < _recentPrepayments.length; index++) ...{
-        _recentAmountKey(index): editableNumber(
-          _recentPrepayments[index].amount,
-        ),
-        _recentDateKey(index): _recentPrepayments[index].repaymentDate,
+      for (final event in _recentPrepayments) ...{
+        _recentAmountKey(event): editableNumber(_displayAmount(event)),
+        _recentDateKey(event): event.repaymentDate,
       },
     };
   }
@@ -166,8 +166,9 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
 
   bool _hasValidRecentPrepaymentDates() {
     for (var index = 0; index < _recentPrepayments.length; index++) {
-      final value = _controllers[_recentDateKey(index)]?.text.trim() ?? '';
-      final amount = _zeroIfBlank(_recentAmountKey(index));
+      final event = _recentPrepayments[index];
+      final value = _controllers[_recentDateKey(event)]?.text.trim() ?? '';
+      final amount = _zeroIfBlank(_recentAmountKey(event));
       if (value.isEmpty && amount <= 0) continue;
       if (value.isEmpty || LoanPlanConfig.parseLoanStartDate(value) == null) {
         ScaffoldMessenger.of(
@@ -179,18 +180,29 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     return true;
   }
 
-  String _recentAmountKey(int index) => 'recentPrepayment-$index-amount';
+  // Key controllers by event identity so reordering does not swap amounts.
+  String _recentAmountKey(RecentPrepayment event) =>
+      'recentPrepayment-${event.id}-amount';
 
-  String _recentDateKey(int index) => 'recentPrepayment-$index-date';
+  String _recentDateKey(RecentPrepayment event) =>
+      'recentPrepayment-${event.id}-date';
 
   List<RecentPrepayment> _eventsFromControllers() {
-    return List<RecentPrepayment>.generate(_recentPrepayments.length, (index) {
-      final event = _recentPrepayments[index];
+    final events = _recentPrepayments.map((event) {
+      final keepsPlannedAmount =
+          event.isSettled || event.actualPrepayment != null;
       return event.copyWith(
-        amount: _zeroIfBlank(_recentAmountKey(index)),
-        repaymentDate: _controllers[_recentDateKey(index)]?.text.trim() ?? '',
+        // A settled field shows the actual amount, but the planned amount must
+        // remain intact for expected-amount calculations and history export.
+        amount: keepsPlannedAmount
+            ? event.amount
+            : _zeroIfBlank(_recentAmountKey(event)),
+        repaymentDate:
+            _controllers[_recentDateKey(event)]?.text.trim() ??
+            event.repaymentDate,
       );
     });
+    return _latestRecentPrepayments(events);
   }
 
   /// Recent transactions drive the plan directly, so they do not wait for the
@@ -239,7 +251,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     while (events.length < 3) {
       events.add(_newRecentPrepayment());
     }
-    return events.take(3).toList(growable: true);
+    return _latestRecentPrepayments(events);
   }
 
   RecentPrepayment _newRecentPrepayment() => RecentPrepayment(
@@ -249,8 +261,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
 
   void _addRecentPrepayment() {
     final events = _eventsFromControllers()..add(_newRecentPrepayment());
-    events.sort(_newestFirst);
-    final retained = events.take(3).toList(growable: true);
+    final retained = _latestRecentPrepayments(events);
     _replaceRecentPrepayments(retained);
     _commitRecentPrepayments();
     ScaffoldMessenger.of(
@@ -278,26 +289,58 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     while (events.length < 3) {
       events.add(_newRecentPrepayment());
     }
-    events.sort(_newestFirst);
-    _replaceRecentPrepayments(events.take(3).toList(growable: true));
+    _replaceRecentPrepayments(_latestRecentPrepayments(events));
     _commitRecentPrepayments();
   }
 
-  int _newestFirst(RecentPrepayment left, RecentPrepayment right) =>
-      right.repaymentDate.compareTo(left.repaymentDate);
+  double _displayAmount(RecentPrepayment event) =>
+      event.actualPrepayment ?? event.amount;
+
+  List<RecentPrepayment> _latestRecentPrepayments(
+    Iterable<RecentPrepayment> source,
+  ) {
+    final newestFirst = _sortRecentPrepayments(source, ascending: false);
+    return _sortRecentPrepayments(newestFirst.take(3), ascending: true);
+  }
+
+  List<RecentPrepayment> _sortRecentPrepayments(
+    Iterable<RecentPrepayment> source, {
+    required bool ascending,
+  }) {
+    final indexed = source.toList(growable: false).indexed.toList();
+    indexed.sort((left, right) {
+      final leftDate = LoanPlanConfig.parseLoanStartDate(left.$2.repaymentDate);
+      final rightDate = LoanPlanConfig.parseLoanStartDate(
+        right.$2.repaymentDate,
+      );
+      if (leftDate == null || rightDate == null) {
+        if (leftDate == null && rightDate == null) {
+          return left.$1.compareTo(right.$1);
+        }
+        // Undated/invalid entries stay at the end in either direction.
+        return leftDate == null ? 1 : -1;
+      }
+      final comparison = leftDate.compareTo(rightDate);
+      return comparison == 0
+          ? ascending
+                ? left.$1.compareTo(right.$1)
+                : right.$1.compareTo(left.$1)
+          : ascending
+          ? comparison
+          : -comparison;
+    });
+    return indexed.map((entry) => entry.$2).toList(growable: true);
+  }
 
   void _replaceRecentPrepayments(List<RecentPrepayment> events) {
     setState(() {
       _recentPrepayments = events;
-      for (var index = 0; index < events.length; index++) {
+      for (final event in events) {
         _setControllerTextIfIdle(
-          _recentAmountKey(index),
-          formatLoanEditableNumber(events[index].amount),
+          _recentAmountKey(event),
+          formatLoanEditableNumber(_displayAmount(event)),
         );
-        _setControllerTextIfIdle(
-          _recentDateKey(index),
-          events[index].repaymentDate,
-        );
+        _setControllerTextIfIdle(_recentDateKey(event), event.repaymentDate);
       }
     });
   }
@@ -435,10 +478,21 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
 
   /// 首页预览只展示尚未结清的未来月份，完整计划仍保留已还记录。
   List<LoanPlanRow> _futurePreviewRows(List<LoanPlanRow> rows) {
-    final now = DateTime.now();
+    final calculationDate = widget.viewModel.calculationDate;
+    final today = DateTime(
+      calculationDate.year,
+      calculationDate.month,
+      calculationDate.day,
+    );
+    final currentMonth = DateTime(today.year, today.month);
     return rows
-        .where(
-          (row) => !row.prepaymentDetails.any((detail) {
+        .where((row) {
+          final rowMonth = LoanPlanConfig.parseLoanStartDate(row.month);
+          // 历史行仅属于完整计划，不能因新增记录进入未来预览。
+          if (rowMonth == null || rowMonth.isBefore(currentMonth)) {
+            return false;
+          }
+          return !row.prepaymentDetails.any((detail) {
             if (detail.actualPrepayment == null ||
                 detail.repaymentDate == null) {
               return false;
@@ -447,9 +501,9 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
               detail.repaymentDate!,
             );
             // 当天仍展示当月；从还款日的下一天开始进入下一个月预览。
-            return repaymentDate != null && now.isAfter(repaymentDate);
-          }),
-        )
+            return repaymentDate != null && today.isAfter(repaymentDate);
+          });
+        })
         .take(3)
         .toList(growable: false);
   }
@@ -578,19 +632,13 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     return years > 0 ? '$terms 期（$years 年）' : '$terms 期';
   }
 
-  // Current balances come from the generated plan, while opening principal stays editable.
+  // Current balances do not pre-deduct a scheduled repayment before its date.
   double _currentCommercialBalance() {
-    final rows = widget.viewModel.rows;
-    return rows.isEmpty
-        ? widget.config.commercialOpeningBalance
-        : rows.first.commercialClosing;
+    return widget.viewModel.currentCommercialBalance;
   }
 
   double _currentProvidentBalance() {
-    final rows = widget.viewModel.rows;
-    return rows.isEmpty
-        ? widget.config.providentOpeningBalance
-        : rows.first.providentClosing;
+    return widget.viewModel.currentProvidentBalance;
   }
 
   String _currentLoanSummary() {
@@ -598,8 +646,8 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
   }
 
   String _expectedPrepaymentSummary() {
-    final latest = widget.viewModel.latestSettledPrepayment;
-    if (latest == null) return '暂无已还';
+    final latest = widget.viewModel.latestPrepaymentOnOrBeforeToday;
+    if (latest == null) return '暂无到期还款';
     return '¥${_money(latest.actualPrepayment ?? latest.amount)}';
   }
 
@@ -865,8 +913,8 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
           _previewRow(
             context,
             month: '月份',
-            expected: '预计提前还款额',
-            balance: '剩余本金',
+            expected: '预计提前\n还款额',
+            balance: '剩余\n本金',
             header: true,
           ),
           ...rows.map(
@@ -875,7 +923,8 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
               month: _displayPreviewMonth(row.month),
               expected: '¥${_money(row.expectedPrepayment)}',
               balance: '¥${_money(row.totalBalance)}',
-              onTap: () => widget.onViewMonth(row.month),
+              selected: row.month == _highlightedPreviewMonth,
+              onTap: () => _handlePreviewRowTap(row.month),
             ),
           ),
           Padding(
@@ -883,7 +932,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                '以上为预测结果，实际以还款后银行数据为准。',
+                '单击选中月份，再次单击进入详情。以上为预测结果，实际以还款后银行数据为准。',
                 style: Theme.of(
                   context,
                 ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
@@ -895,12 +944,22 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     );
   }
 
+  /// A second single tap on the selected preview row opens its month detail.
+  void _handlePreviewRowTap(String month) {
+    if (_highlightedPreviewMonth == month) {
+      widget.onViewMonth(month);
+      return;
+    }
+    setState(() => _highlightedPreviewMonth = month);
+  }
+
   Widget _previewRow(
     BuildContext context, {
     required String month,
     required String expected,
     required String balance,
     bool header = false,
+    bool selected = false,
     VoidCallback? onTap,
   }) {
     final style = TextStyle(
@@ -912,12 +971,14 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     );
     return Material(
       color: Colors.transparent,
-      child: InkWell(
+      child: LoanPlanGestureDetector(
         onTap: onTap,
         child: Container(
           height: header ? 34 : 44,
           decoration: BoxDecoration(
-            color: header
+            color: selected
+                ? Theme.of(context).colorScheme.secondaryContainer
+                : header
                 ? Theme.of(context).colorScheme.surfaceContainerHigh
                 : null,
             border: Border(
@@ -931,16 +992,12 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             children: [
-              Expanded(
-                flex: 3,
-                child: Text(month, textAlign: TextAlign.center, style: style),
-              ),
+              Expanded(flex: 3, child: _previewCell(month, style)),
               Expanded(
                 flex: 4,
-                child: Text(
+                child: _previewCell(
                   expected,
-                  textAlign: TextAlign.center,
-                  style: header
+                  header
                       ? style
                       : style.copyWith(
                           color: Theme.of(context).colorScheme.error,
@@ -949,33 +1006,35 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
               ),
               Expanded(
                 flex: 5,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        balance,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: style,
-                      ),
-                    ),
-                    if (!header) ...[
-                      const SizedBox(width: 4),
-                      Icon(
-                        Icons.chevron_right,
-                        size: 18,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ],
-                  ],
-                ),
+                child: _previewCell(balance, style, withArrow: !header),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _previewCell(String value, TextStyle style, {bool withArrow = false}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Flexible(
+          child: Text(
+            value,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: style,
+          ),
+        ),
+        if (withArrow)
+          Icon(
+            Icons.chevron_right,
+            size: 18,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+      ],
     );
   }
 
@@ -1045,19 +1104,19 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
 
   Widget _recentPrepaymentFields(int index) {
     final event = _recentPrepayments[index];
-    final isSettled = event.isSettled;
+    final isSettled = event.isSettled || event.actualPrepayment != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _inputField(
           '第 ${index + 1} 笔金额',
-          _recentAmountKey(index),
+          _recentAmountKey(event),
           suffix: '元',
           enabled: !isSettled,
         ),
         _inputField(
           '第 ${index + 1} 笔还款日期',
-          _recentDateKey(index),
+          _recentDateKey(event),
           suffix: isSettled ? '已结清' : '预定日期',
           date: true,
           enabled: !isSettled,

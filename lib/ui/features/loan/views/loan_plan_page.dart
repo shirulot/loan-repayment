@@ -7,6 +7,7 @@ import 'loan_plan_detail_page.dart';
 import 'loan_calculator_page.dart';
 import 'loan_plan_formatters.dart';
 import 'loan_plan_mobile_layout.dart';
+import 'loan_month_detail_page.dart';
 
 class LoanPlanPage extends StatefulWidget {
   const LoanPlanPage({super.key, required this.viewModel});
@@ -28,7 +29,14 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
   }
 
   Future<void> _openDetailsForMonth(String month) async {
-    await _openDetailsAtMonth(month);
+    // Preview rows reserve the first tap for highlighting; a second tap opens
+    // the dedicated monthly detail page without changing the plan tab.
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            LoanMonthDetailPage(viewModel: viewModel, initialMonth: month),
+      ),
+    );
   }
 
   Future<void> _openDetailsAtMonth([String? month]) async {
@@ -110,22 +118,26 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 if (constraints.maxWidth < 640) {
-                  if (_mobileTabIndex == 1) {
-                    return LoanPlanDetailPage(
-                      viewModel: viewModel,
-                      embedded: true,
-                      initialMonth: _pendingDetailMonth,
-                    );
-                  }
-                  if (_mobileTabIndex == 2) {
-                    return LoanCalculatorPage(viewModel: viewModel);
-                  }
-                  return MobileLoanPlanLayout(
-                    viewModel: viewModel,
-                    config: viewModel.config,
-                    onViewDetails: _openDetails,
-                    onViewMonth: _openDetailsForMonth,
-                    onShowInfo: _showMobileInfo,
+                  // Keep each tab mounted so stateful surfaces (especially the
+                  // calculator's expression controller) survive tab changes.
+                  return IndexedStack(
+                    index: _mobileTabIndex,
+                    alignment: Alignment.topCenter,
+                    children: [
+                      MobileLoanPlanLayout(
+                        viewModel: viewModel,
+                        config: viewModel.config,
+                        onViewDetails: _openDetails,
+                        onViewMonth: _openDetailsForMonth,
+                        onShowInfo: _showMobileInfo,
+                      ),
+                      LoanPlanDetailPage(
+                        viewModel: viewModel,
+                        embedded: true,
+                        initialMonth: _pendingDetailMonth,
+                      ),
+                      LoanCalculatorPage(viewModel: viewModel),
+                    ],
                   );
                 }
                 final isWide = constraints.maxWidth >= 1080;
@@ -300,8 +312,14 @@ class _SummaryStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final rows = viewModel.rows;
-    final current = rows.first;
-    final next = rows.length > 1 ? rows[1] : current;
+    final current = rows.firstWhere(
+      (row) => row.month == viewModel.fixedPrepaymentMonths.first,
+      orElse: () => rows.first,
+    );
+    final next = rows.firstWhere(
+      (row) => row.month == viewModel.fixedPrepaymentMonths[1],
+      orElse: () => current,
+    );
     String amount(double value) =>
         formatLoanMoneyProtected(value, masked: viewModel.amountsMasked);
     return LayoutBuilder(
@@ -310,9 +328,12 @@ class _SummaryStrip extends StatelessWidget {
         final cards = [
           _MetricCard(
             label: '当前总余额',
-            value: amount(current.totalBalance),
+            value: amount(
+              viewModel.currentCommercialBalance +
+                  viewModel.currentProvidentBalance,
+            ),
             detail:
-                '商贷 ${amount(current.commercialClosing)} · 公积金 ${amount(current.providentClosing)}',
+                '商贷 ${amount(viewModel.currentCommercialBalance)} · 公积金 ${amount(viewModel.currentProvidentBalance)}',
             icon: Icons.savings_outlined,
           ),
           _MetricCard(

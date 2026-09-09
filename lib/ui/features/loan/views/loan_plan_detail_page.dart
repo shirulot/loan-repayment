@@ -10,13 +10,19 @@ import '../../../../domain/models/loan_models.dart';
 import '../view_models/loan_planner_view_model.dart';
 import 'loan_plan_calendar_formatters.dart';
 import 'loan_plan_formatters.dart';
+import 'loan_month_detail_page.dart';
+import 'loan_plan_gesture_detector.dart';
 
 enum _PlanColumnKey {
   gregorianMonth(label: '公历月份', header: '公历\n月份', width: 64),
   lunarMonth(label: '农历月份', header: '农历\n月份', width: 72),
   commercialPayment(label: '商贷月供', header: '商贷\n月供', width: 74),
+  commercialPrincipal(label: '商贷月供本金', header: '商贷月供\n本金', width: 78),
+  commercialInterest(label: '商贷月供利息', header: '商贷月供\n利息', width: 78),
   commercialReduction(label: '商贷减少', header: '商贷\n减少', width: 74),
   providentPayment(label: '公积金月供', header: '公积金\n月供', width: 74),
+  providentPrincipal(label: '公积金月供本金', header: '公积金月供\n本金', width: 82),
+  providentInterest(label: '公积金月供利息', header: '公积金月供\n利息', width: 82),
   providentReduction(label: '公积金减少', header: '公积金\n减少', width: 74),
   totalPayment(label: '月供合计', header: '月供\n合计', width: 74),
   totalReduction(label: '总额减少', header: '总额\n减少', width: 74),
@@ -44,8 +50,12 @@ enum _PlanColumnKey {
 
 const _defaultPlanVisibleColumns = <_PlanColumnKey>{
   _PlanColumnKey.commercialPayment,
+  _PlanColumnKey.commercialPrincipal,
+  _PlanColumnKey.commercialInterest,
   _PlanColumnKey.commercialReduction,
   _PlanColumnKey.providentPayment,
+  _PlanColumnKey.providentPrincipal,
+  _PlanColumnKey.providentInterest,
   _PlanColumnKey.providentReduction,
   _PlanColumnKey.totalPayment,
   _PlanColumnKey.totalReduction,
@@ -158,6 +168,12 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
       // Add newly introduced default columns once without overriding future
       // visibility choices made by the user.
       restoredColumns.add(_PlanColumnKey.transferDifference);
+      restoredColumns.addAll({
+        _PlanColumnKey.commercialPrincipal,
+        _PlanColumnKey.commercialInterest,
+        _PlanColumnKey.providentPrincipal,
+        _PlanColumnKey.providentInterest,
+      });
       unawaited(
         _columnSettingsService.save(
           restoredColumns.map((column) => column.name),
@@ -212,10 +228,13 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
     );
   }
 
-  void _toggleHighlightedMonth(String month) {
-    setState(() {
-      _highlightedMonth = _highlightedMonth == month ? null : month;
-    });
+  /// The first tap selects a row; tapping the selected row opens its detail.
+  void _selectOrOpenMonth(String month) {
+    if (_highlightedMonth == month) {
+      unawaited(_openMonthDetail(month));
+      return;
+    }
+    setState(() => _highlightedMonth = month);
   }
 
   Future<void> _openColumnSettings() async {
@@ -381,6 +400,18 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
     await _export(action);
   }
 
+  /// Opens the complete monthly detail page for the selected row.
+  Future<void> _openMonthDetail(String month) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => LoanMonthDetailPage(
+          viewModel: widget.viewModel,
+          initialMonth: month,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -542,7 +573,7 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
                               targetMonth: widget.initialMonth,
                               targetRowKey: _targetRowKey,
                               highlightedMonth: _highlightedMonth,
-                              onRowTap: _toggleHighlightedMonth,
+                              onRowTap: _selectOrOpenMonth,
                             ),
                           ),
                         ),
@@ -554,7 +585,7 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
                     visibleColumns: _visibleColumns,
                     amountsMasked: widget.viewModel.amountsMasked,
                     highlightedMonth: _highlightedMonth,
-                    onRowTap: _toggleHighlightedMonth,
+                    onRowTap: _selectOrOpenMonth,
                     tableWidth: tableWidth,
                     verticalController: _verticalController,
                     horizontalController: _horizontalController,
@@ -720,6 +751,11 @@ class _CompactPlanTable extends StatelessWidget {
   }) {
     final row = displayRow.row;
     final prepayment = displayRow.prepayment;
+    // Expanded later transactions use the inserted normal-payment step
+    // instead of repeating the outer calendar row's payment values.
+    final paymentBefore = prepayment?.hasNormalPaymentBefore == true
+        ? prepayment
+        : null;
     final colors = Theme.of(context).colorScheme;
     return switch (column) {
       _PlanColumnKey.gregorianMonth => _textCell(
@@ -733,9 +769,21 @@ class _CompactPlanTable extends StatelessWidget {
       ),
       _PlanColumnKey.commercialPayment => _textCell(
         formatLoanMoneyProtected(
-          row.commercialPayment,
+          paymentBefore?.commercialPaymentBefore ?? row.commercialPayment,
           masked: amountsMasked,
           dashWhenEmpty: true,
+        ),
+      ),
+      _PlanColumnKey.commercialPrincipal => _textCell(
+        formatLoanMoneyProtected(
+          paymentBefore?.commercialPrincipalBefore ?? row.commercialPrincipal,
+          masked: amountsMasked,
+        ),
+      ),
+      _PlanColumnKey.commercialInterest => _textCell(
+        formatLoanMoneyProtected(
+          paymentBefore?.commercialInterestBefore ?? row.commercialInterest,
+          masked: amountsMasked,
         ),
       ),
       _PlanColumnKey.commercialReduction => _textCell(
@@ -747,9 +795,21 @@ class _CompactPlanTable extends StatelessWidget {
       ),
       _PlanColumnKey.providentPayment => _textCell(
         formatLoanMoneyProtected(
-          row.providentPayment,
+          paymentBefore?.providentPaymentBefore ?? row.providentPayment,
           masked: amountsMasked,
           dashWhenEmpty: true,
+        ),
+      ),
+      _PlanColumnKey.providentPrincipal => _textCell(
+        formatLoanMoneyProtected(
+          paymentBefore?.providentPrincipalBefore ?? row.providentPrincipal,
+          masked: amountsMasked,
+        ),
+      ),
+      _PlanColumnKey.providentInterest => _textCell(
+        formatLoanMoneyProtected(
+          paymentBefore?.providentInterestBefore ?? row.providentInterest,
+          masked: amountsMasked,
         ),
       ),
       _PlanColumnKey.providentReduction => _textCell(
@@ -760,7 +820,13 @@ class _CompactPlanTable extends StatelessWidget {
         ),
       ),
       _PlanColumnKey.totalPayment => _textCell(
-        formatLoanMoneyProtected(row.totalPayment, masked: amountsMasked),
+        formatLoanMoneyProtected(
+          paymentBefore == null
+              ? row.totalPayment
+              : paymentBefore.commercialPaymentBefore +
+                    paymentBefore.providentPaymentBefore,
+          masked: amountsMasked,
+        ),
         bold: true,
       ),
       _PlanColumnKey.totalReduction => _textCell(
@@ -878,11 +944,7 @@ class _CompactPlanTable extends StatelessWidget {
   }
 
   static Widget _tapCell(Widget child, VoidCallback onTap) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: child,
-    );
+    return LoanPlanGestureDetector(onTap: onTap, child: child);
   }
 
   static Widget _textCell(

@@ -10,21 +10,23 @@ class LoanCalculator {
 
   String get startMonth => monthAt(0);
 
+  /// The date used to decide whether a scheduled prepayment has taken effect.
+  DateTime get calculationDate => currentDate ?? DateTime.now();
+
   List<LoanPlanRow> calculate(
     LoanPlanConfig config,
     Map<String, double?> actualPrepayments,
   ) {
     var commercialOpening = config.commercialOpeningBalance;
     var providentOpening = config.providentOpeningBalance;
-    final calculationDate = currentDate ?? DateTime.now();
-    var remainingTerms = config.remainingTermsAt(calculationDate);
-    var providentDeferredInterest = 0.0;
+    final planStartDate = _planStartDate(config, actualPrepayments);
+    var remainingTerms = config.remainingTermsAt(planStartDate);
     final rows = <LoanPlanRow>[];
 
     // The limit is only a safety net for invalid configurations that cannot make progress.
     const maxCalculationMonths = 1200;
     for (var index = 0; index < maxCalculationMonths; index++) {
-      final month = monthAt(index);
+      final month = _monthAt(planStartDate, index);
       final isCalibrationMonth = index == 0;
       final openingBalance = commercialOpening + providentOpening;
 
@@ -43,11 +45,9 @@ class LoanCalculator {
       final providentPrincipal = isCalibrationMonth
           ? 0.0
           : _normalPrincipal(providentOpening, remainingTerms);
-      final providentInterest =
-          (isCalibrationMonth
-              ? 0.0
-              : providentOpening * config.providentAnnualRate / 12) +
-          providentDeferredInterest;
+      final providentInterest = isCalibrationMonth
+          ? 0.0
+          : providentOpening * config.providentAnnualRate / 12;
       final commercialPayment = commercialPrincipal + commercialInterest;
       final providentPayment = providentPrincipal + providentInterest;
       final totalPayment = commercialPayment + providentPayment;
@@ -89,13 +89,21 @@ class LoanCalculator {
                   .min(requestedPrepayment, remainingAfterNormalPayment)
                   .toDouble(),
             );
-      final actualPrepayment = actualPrepayments[month];
-      final prepayments = actualPrepayment == null
+      final legacyActualPrepayment = actualPrepayments[month];
+      // Each dated event owns its actual amount. The old month-keyed value is
+      // only retained for imported backups that predate event-based records.
+      final eventActualPrepayment = scheduledPrepayments
+          .where((prepayment) => prepayment.actualPrepayment != null)
+          .fold<double>(0, (total, prepayment) => total + prepayment.amount);
+      final actualPrepayment =
+          legacyActualPrepayment ??
+          (eventActualPrepayment > 0 ? eventActualPrepayment : null);
+      final prepayments = legacyActualPrepayment == null
           ? scheduledPrepayments
           : <_ScheduledPrepayment>[
               _ScheduledPrepayment(
-                amount: math.max(0.0, actualPrepayment),
-                actualPrepayment: math.max(0.0, actualPrepayment),
+                amount: math.max(0.0, legacyActualPrepayment),
+                actualPrepayment: math.max(0.0, legacyActualPrepayment),
                 repaymentDate: scheduledPrepayments.isEmpty
                     ? _validPrepaymentDate(
                         _plannedPrepaymentDate(index, config),
@@ -116,6 +124,10 @@ class LoanCalculator {
         providentBalance: math
             .max(0.0, providentOpening - providentPrincipal)
             .toDouble(),
+        remainingTermsForAdditionalPayment: isCalibrationMonth
+            ? remainingTerms
+            : math.max(0, remainingTerms - 1).toInt(),
+        paymentMonthStart: month,
         config: config,
       );
       final plannedPrepaymentDate = scheduledPrepayments.isEmpty
@@ -130,7 +142,6 @@ class LoanCalculator {
       final commercialClosing = appliedPrepayments.commercialClosing;
       final providentClosing = appliedPrepayments.providentClosing;
       final prepaymentInterestDueNow = appliedPrepayments.interestDueNow;
-      providentDeferredInterest = appliedPrepayments.providentDeferredInterest;
       final nextMonthBasePayment = _baseMonthlyPayment(
         commercialOpening: commercialOpening,
         providentOpening: providentOpening,
@@ -187,17 +198,17 @@ class LoanCalculator {
 
       commercialOpening = commercialClosing;
       providentOpening = providentClosing;
-      if (!isCalibrationMonth) {
-        remainingTerms = math.max(0, remainingTerms - 1).toInt();
-      }
+      final normalPaymentsApplied =
+          (isCalibrationMonth ? 0 : 1) +
+          appliedPrepayments.additionalNormalPayments;
+      remainingTerms = math
+          .max(0, remainingTerms - normalPaymentsApplied)
+          .toInt();
 
       final closingBalance = commercialClosing + providentClosing;
-      final pendingInterest = providentDeferredInterest;
-      if (closingBalance < 0.01 && pendingInterest < 0.01) break;
+      if (closingBalance < 0.01) break;
       // 首行只负责按当前余额校准；后续若本金无法下降则停止，避免死循环。
-      if (!isCalibrationMonth &&
-          openingBalance - closingBalance <= 0.000001 &&
-          pendingInterest < 0.01) {
+      if (!isCalibrationMonth && openingBalance - closingBalance <= 0.000001) {
         break;
       }
     }
@@ -206,9 +217,43 @@ class LoanCalculator {
 
   /// Returns the month at [index] relative to the current calendar month.
   String monthAt(int index) {
-    final now = currentDate ?? DateTime.now();
-    final date = DateTime(now.year, now.month + index);
+    return _monthAt(calculationDate, index);
+  }
+
+  String _monthAt(DateTime startDate, int index) {
+    final date = DateTime(startDate.year, startDate.month + index);
     return '${date.year}-${date.month.toString().padLeft(2, '0')}';
+  }
+
+  /// Keeps the months containing confirmed repayments as auditable history.
+  DateTime _planStartDate(
+    LoanPlanConfig config,
+    Map<String, double?> actualPrepayments,
+  ) {
+    final currentMonth = DateTime(calculationDate.year, calculationDate.month);
+    var startDate = currentMonth;
+
+    void consider(DateTime? date, double? amount) {
+      if (date == null || amount == null || amount <= 0) return;
+      final month = DateTime(date.year, date.month);
+      if (month.isBefore(currentMonth) && month.isBefore(startDate)) {
+        startDate = month;
+      }
+    }
+
+    for (final entry in actualPrepayments.entries) {
+      consider(
+        LoanPlanConfig.parseLoanStartDate('${entry.key}-01'),
+        entry.value,
+      );
+    }
+    for (final event in config.recentPrepayments) {
+      consider(
+        LoanPlanConfig.parseLoanStartDate(event.repaymentDate),
+        event.actualPrepayment,
+      );
+    }
+    return startDate;
   }
 
   double _commercialPrincipal({
@@ -228,6 +273,19 @@ class LoanCalculator {
     required LoanPlanConfig config,
   }) {
     if (index == 0 || opening <= 0) return 0;
+    return _commercialInterestForPaymentMonth(
+      month: month,
+      opening: opening,
+      config: config,
+    );
+  }
+
+  double _commercialInterestForPaymentMonth({
+    required String month,
+    required double opening,
+    required LoanPlanConfig config,
+  }) {
+    if (opening <= 0) return 0;
     final date = LoanPlanConfig.parseLoanStartDate('$month-01');
     if (date == null) return opening * config.commercialAnnualRate / 12;
     // 月供发生在当月 1 日，计息周期对应上一个完整自然月。
@@ -243,6 +301,39 @@ class LoanCalculator {
   double _normalPrincipal(double opening, int remainingTerms) {
     if (opening <= 0 || remainingTerms <= 0) return 0;
     return math.min(opening, opening / remainingTerms);
+  }
+
+  /// Calculates an inserted normal-payment step between two same-month
+  /// prepayments. Interest is paid as part of that step; only principal
+  /// reduces the loan balances.
+  _NormalPayment _normalPayment({
+    required double commercialOpening,
+    required double providentOpening,
+    required int remainingTerms,
+    required String paymentMonth,
+    required LoanPlanConfig config,
+  }) {
+    final commercialPrincipal = _normalPrincipal(
+      commercialOpening,
+      remainingTerms,
+    );
+    final commercialInterest = _commercialInterestForPaymentMonth(
+      month: paymentMonth,
+      opening: commercialOpening,
+      config: config,
+    );
+    final providentPrincipal = _normalPrincipal(
+      providentOpening,
+      remainingTerms,
+    );
+    final providentInterest =
+        providentOpening * config.providentAnnualRate / 12;
+    return _NormalPayment(
+      commercialPrincipal: commercialPrincipal,
+      commercialInterest: commercialInterest,
+      providentPrincipal: providentPrincipal,
+      providentInterest: providentInterest,
+    );
   }
 
   double _requestedPrepayment({
@@ -313,6 +404,8 @@ class LoanCalculator {
     required List<_ScheduledPrepayment> prepayments,
     required double commercialBalance,
     required double providentBalance,
+    required int remainingTermsForAdditionalPayment,
+    required String paymentMonthStart,
     required LoanPlanConfig config,
   }) {
     var remainingCommercial = commercialBalance;
@@ -320,11 +413,44 @@ class LoanCalculator {
     var commercialPrepayment = 0.0;
     var providentPrepayment = 0.0;
     var interestDueNow = 0.0;
-    var providentDeferredInterest = 0.0;
+    var paymentRemainingTerms = remainingTermsForAdditionalPayment;
+    var additionalNormalPayments = 0;
     final dates = <String>[];
     final details = <LoanPrepaymentDetail>[];
 
-    for (final prepayment in prepayments) {
+    for (var index = 0; index < prepayments.length; index++) {
+      final prepayment = prepayments[index];
+      var normalPaymentBefore = const _NormalPayment.zero();
+      if (index > 0) {
+        normalPaymentBefore = _normalPayment(
+          commercialOpening: remainingCommercial,
+          providentOpening: remainingProvident,
+          remainingTerms: paymentRemainingTerms,
+          paymentMonth: _monthAt(
+            LoanPlanConfig.parseLoanStartDate('$paymentMonthStart-01')!,
+            index,
+          ),
+          config: config,
+        );
+        remainingCommercial = math
+            .max(
+              0.0,
+              remainingCommercial - normalPaymentBefore.commercialPrincipal,
+            )
+            .toDouble();
+        remainingProvident = math
+            .max(
+              0.0,
+              remainingProvident - normalPaymentBefore.providentPrincipal,
+            )
+            .toDouble();
+        if (normalPaymentBefore.hasPrincipal) {
+          additionalNormalPayments++;
+          paymentRemainingTerms = math
+              .max(0, paymentRemainingTerms - 1)
+              .toInt();
+        }
+      }
       final used = math
           .min(
             math.max(0.0, prepayment.amount),
@@ -350,13 +476,7 @@ class LoanCalculator {
         annualRate: config.providentAnnualRate,
         prepaymentDate: date,
       );
-      final providentDeferred = _remainingMonthInterest(
-        prepayment: providentPart,
-        annualRate: config.providentAnnualRate,
-        prepaymentDate: date,
-      );
       interestDueNow += commercialInterestDueNow + providentInterestDueNow;
-      providentDeferredInterest += providentDeferred;
       if (date != null) dates.add(date);
       if (used > 0) {
         details.add(
@@ -367,9 +487,16 @@ class LoanCalculator {
             actualPrepayment: prepayment.actualPrepayment == null ? null : used,
             repaymentDate: date,
             interestDueNow: commercialInterestDueNow + providentInterestDueNow,
-            nextMonthDeferredInterest: providentDeferred,
+            // 提前还款日利息单独结算，不能叠加到下一期常规月供。
+            nextMonthDeferredInterest: 0,
             commercialClosing: remainingCommercial,
             providentClosing: remainingProvident,
+            commercialPrincipalBefore: normalPaymentBefore.commercialPrincipal,
+            commercialInterestBefore: normalPaymentBefore.commercialInterest,
+            commercialPaymentBefore: normalPaymentBefore.commercialPayment,
+            providentPrincipalBefore: normalPaymentBefore.providentPrincipal,
+            providentInterestBefore: normalPaymentBefore.providentInterest,
+            providentPaymentBefore: normalPaymentBefore.providentPayment,
           ),
         );
       }
@@ -382,7 +509,7 @@ class LoanCalculator {
       commercialClosing: remainingCommercial,
       providentClosing: remainingProvident,
       interestDueNow: interestDueNow,
-      providentDeferredInterest: providentDeferredInterest,
+      additionalNormalPayments: additionalNormalPayments,
       dates: dates,
       details: details,
     );
@@ -411,28 +538,8 @@ class LoanCalculator {
         _elapsedDays(prepaymentDate);
   }
 
-  /// Provident-fund repayment keeps the remaining-days carry convention.
-  double _remainingMonthInterest({
-    required double prepayment,
-    required double annualRate,
-    required String? prepaymentDate,
-  }) {
-    if (prepayment <= 0 || annualRate <= 0 || prepaymentDate == null) return 0;
-    return prepayment *
-        annualRate /
-        _prepaymentInterestDayBase *
-        _remainingDaysInMonth(prepaymentDate);
-  }
-
   int _elapsedDays(String prepaymentDate) {
     return LoanPlanConfig.parseLoanStartDate(prepaymentDate)?.day ?? 1;
-  }
-
-  int _remainingDaysInMonth(String prepaymentDate) {
-    final date = LoanPlanConfig.parseLoanStartDate(prepaymentDate);
-    if (date == null) return 0;
-    final daysInMonth = DateTime(date.year, date.month + 1, 0).day;
-    return daysInMonth - date.day;
   }
 
   /// 只按当月余额、剩余期数及两类利率计算转息前基础月供。
@@ -506,7 +613,7 @@ class _AppliedPrepayments {
     required this.commercialClosing,
     required this.providentClosing,
     required this.interestDueNow,
-    required this.providentDeferredInterest,
+    required this.additionalNormalPayments,
     required this.dates,
     required this.details,
   });
@@ -517,7 +624,33 @@ class _AppliedPrepayments {
   final double commercialClosing;
   final double providentClosing;
   final double interestDueNow;
-  final double providentDeferredInterest;
+  final int additionalNormalPayments;
   final List<String> dates;
   final List<LoanPrepaymentDetail> details;
+}
+
+class _NormalPayment {
+  const _NormalPayment({
+    required this.commercialPrincipal,
+    required this.commercialInterest,
+    required this.providentPrincipal,
+    required this.providentInterest,
+  });
+
+  const _NormalPayment.zero()
+    : commercialPrincipal = 0,
+      commercialInterest = 0,
+      providentPrincipal = 0,
+      providentInterest = 0;
+
+  final double commercialPrincipal;
+  final double commercialInterest;
+  final double providentPrincipal;
+  final double providentInterest;
+
+  double get commercialPayment => commercialPrincipal + commercialInterest;
+
+  double get providentPayment => providentPrincipal + providentInterest;
+
+  bool get hasPrincipal => commercialPrincipal > 0 || providentPrincipal > 0;
 }

@@ -10,10 +10,14 @@ class LoanCachedState {
   const LoanCachedState({
     required this.config,
     required this.actualPrepayments,
+    this.calculatorExpression = '',
+    this.temporaryCalculatorResults = const <double>[],
   });
 
   final LoanPlanConfig config;
   final Map<String, double?> actualPrepayments;
+  final String calculatorExpression;
+  final List<double> temporaryCalculatorResults;
 
   /// Parses both cache files and JSON backups exported by this application.
   factory LoanCachedState.fromJson(Map<dynamic, dynamic> json) {
@@ -32,9 +36,18 @@ class LoanCachedState {
         }
       }
     }
+    final temporaryCalculatorResults = <double>[];
+    final temporaryJson = json['temporaryCalculatorResults'];
+    if (temporaryJson is List) {
+      for (final value in temporaryJson) {
+        if (value is num) temporaryCalculatorResults.add(value.toDouble());
+      }
+    }
     return LoanCachedState(
       config: LoanPlanConfig.fromJson(Map<String, dynamic>.from(configJson)),
       actualPrepayments: actualPrepayments,
+      calculatorExpression: json['calculatorExpression']?.toString() ?? '',
+      temporaryCalculatorResults: temporaryCalculatorResults,
     );
   }
 
@@ -42,6 +55,8 @@ class LoanCachedState {
   Map<String, Object?> toJson() => <String, Object?>{
     'config': config.toJson(),
     'actualPrepayments': actualPrepayments,
+    'calculatorExpression': calculatorExpression,
+    'temporaryCalculatorResults': temporaryCalculatorResults,
   };
 }
 
@@ -72,12 +87,16 @@ class LoanCacheService {
 
   Future<void> save(
     LoanPlanConfig config,
-    Map<String, double?> actualPrepayments,
-  ) async {
+    Map<String, double?> actualPrepayments, {
+    String calculatorExpression = '',
+    List<double> temporaryCalculatorResults = const <double>[],
+  }) async {
     final file = await _stateFile();
     final payload = LoanCachedState(
       config: config,
       actualPrepayments: actualPrepayments,
+      calculatorExpression: calculatorExpression,
+      temporaryCalculatorResults: temporaryCalculatorResults,
     ).toJson();
     await file.writeAsString(
       const JsonEncoder.withIndent('  ').convert(payload),
