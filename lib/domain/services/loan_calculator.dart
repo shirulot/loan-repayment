@@ -434,6 +434,9 @@ class LoanCalculator {
     // show the newly reduced monthly payment without applying it repeatedly.
     var previewCommercial = commercialBalance;
     var previewProvident = providentBalance;
+    // Same-month previews describe the same upcoming instalment, so they
+    // must retain one shared term count until the next calendar month.
+    final previewRemainingTerms = remainingTermsForAdditionalPayment;
     final previewPaymentMonth = _monthAt(
       LoanPlanConfig.parseLoanStartDate('$paymentMonthStart-01')!,
       1,
@@ -482,7 +485,7 @@ class LoanCalculator {
         normalPaymentBefore = _normalPayment(
           commercialOpening: previewCommercial,
           providentOpening: previewProvident,
-          remainingTerms: paymentRemainingTerms,
+          remainingTerms: previewRemainingTerms,
           paymentMonth: previewPaymentMonth,
           config: config,
         );

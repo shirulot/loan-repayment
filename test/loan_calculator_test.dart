@@ -631,7 +631,7 @@ void main() {
       expect(first.commercialPrincipalBefore, closeTo(750, 0.001));
       expect(first.commercialInterestBefore, closeTo(282.875, 0.001));
       expect(first.commercialClosing, closeTo(8250, 0.001));
-      expect(second.commercialPrincipalBefore, closeTo(7000 / 11, 0.001));
+      expect(second.commercialPrincipalBefore, closeTo(7000 / 12, 0.001));
       expect(
         second.commercialPaymentBefore,
         lessThan(first.commercialPaymentBefore),
@@ -675,7 +675,7 @@ void main() {
     expect(september.commercialPrincipal, closeTo(10000 / 12, 0.001));
     expect(first.commercialPrincipalBefore, closeTo(750, 0.001));
     expect(first.commercialPaymentBefore, closeTo(1023.75, 0.001));
-    expect(second.commercialPrincipalBefore, closeTo(7000 / 11, 0.001));
+    expect(second.commercialPrincipalBefore, closeTo(7000 / 12, 0.001));
     expect(
       second.commercialPaymentBefore,
       lessThan(first.commercialPaymentBefore),
@@ -720,11 +720,11 @@ void main() {
       );
       expect(
         august.prepaymentDetails[1].commercialPrincipalBefore,
-        closeTo(7000 / 11, 0.001),
+        closeTo(7000 / 12, 0.001),
       );
       expect(
         august.prepaymentDetails[2].commercialPrincipalBefore,
-        closeTo(4000 / 11, 0.001),
+        closeTo(4000 / 12, 0.001),
       );
       expect(august.totalBalance, closeTo(3250, 0.001));
     },
@@ -760,7 +760,7 @@ void main() {
     expect(first.providentPrincipalBefore, closeTo(450, 0.001));
     expect(first.providentInterestBefore, closeTo(22.5, 0.001));
     expect(second.commercialPrincipalBefore, closeTo(0, 0.001));
-    expect(second.providentPrincipalBefore, closeTo(4000 / 9, 0.001));
+    expect(second.providentPrincipalBefore, closeTo(4000 / 10, 0.001));
     expect(second.providentInterestBefore, closeTo(20, 0.001));
     expect(first.commercialClosing, closeTo(0, 0.001));
     expect(first.providentClosing, closeTo(4050, 0.001));
@@ -779,6 +779,47 @@ void main() {
     expect(viewModel.currentProvidentBalance, closeTo(3550, 0.001));
     viewModel.dispose();
   });
+
+  test(
+    'does not increase provident payment after commercial-only prepayments',
+    () {
+      const commercialOnlyConfig = LoanPlanConfig(
+        commercialOpeningBalance: 10000,
+        providentOpeningBalance: 5000,
+        commercialAnnualRate: 0.12,
+        providentAnnualRate: 0.06,
+        remainingTerms: 10,
+        recentPrepayments: [
+          RecentPrepayment(
+            id: 'commercial-first',
+            amount: 1000,
+            repaymentDate: '2026-08-04',
+          ),
+          RecentPrepayment(
+            id: 'commercial-second',
+            amount: 2000,
+            repaymentDate: '2026-08-20',
+          ),
+        ],
+      );
+
+      final details = calculator
+          .calculate(commercialOnlyConfig, {})
+          .first
+          .prepaymentDetails;
+
+      expect(details[0].providentPrincipalBefore, closeTo(500, 0.001));
+      expect(details[1].providentPrincipalBefore, closeTo(500, 0.001));
+      expect(
+        details[1].providentPaymentBefore,
+        details[0].providentPaymentBefore,
+      );
+      expect(
+        details[1].commercialPaymentBefore,
+        lessThan(details[0].commercialPaymentBefore),
+      );
+    },
+  );
 
   test(
     'uses the current month as the recent expected repayment sequence start',
