@@ -751,11 +751,38 @@ class _CompactPlanTable extends StatelessWidget {
   }) {
     final row = displayRow.row;
     final prepayment = displayRow.prepayment;
-    // Expanded later transactions use the inserted normal-payment step
-    // instead of repeating the outer calendar row's payment values.
+    // An expanded transaction uses its own normal-payment step instead of
+    // repeating the outer calendar row's payment values. Later same-month
+    // transactions do not display a second normal payment.
     final paymentBefore = prepayment?.hasNormalPaymentBefore == true
         ? prepayment
         : null;
+    final isLaterSameMonthPrepayment =
+        prepayment != null && !displayRow.isPrimary;
+    final commercialPayment =
+        paymentBefore?.commercialPaymentBefore ??
+        (isLaterSameMonthPrepayment ? 0 : row.commercialPayment);
+    final commercialPrincipal =
+        paymentBefore?.commercialPrincipalBefore ??
+        (isLaterSameMonthPrepayment ? 0 : row.commercialPrincipal);
+    final commercialInterest =
+        paymentBefore?.commercialInterestBefore ??
+        (isLaterSameMonthPrepayment ? 0 : row.commercialInterest);
+    final providentPayment =
+        paymentBefore?.providentPaymentBefore ??
+        (isLaterSameMonthPrepayment ? 0 : row.providentPayment);
+    final providentPrincipal =
+        paymentBefore?.providentPrincipalBefore ??
+        (isLaterSameMonthPrepayment ? 0 : row.providentPrincipal);
+    final providentInterest =
+        paymentBefore?.providentInterestBefore ??
+        (isLaterSameMonthPrepayment ? 0 : row.providentInterest);
+    final totalPayment = paymentBefore == null
+        ? isLaterSameMonthPrepayment
+              ? 0.0
+              : row.totalPayment
+        : paymentBefore.commercialPaymentBefore +
+              paymentBefore.providentPaymentBefore;
     final colors = Theme.of(context).colorScheme;
     return switch (column) {
       _PlanColumnKey.gregorianMonth => _textCell(
@@ -769,22 +796,16 @@ class _CompactPlanTable extends StatelessWidget {
       ),
       _PlanColumnKey.commercialPayment => _textCell(
         formatLoanMoneyProtected(
-          paymentBefore?.commercialPaymentBefore ?? row.commercialPayment,
+          commercialPayment,
           masked: amountsMasked,
           dashWhenEmpty: true,
         ),
       ),
       _PlanColumnKey.commercialPrincipal => _textCell(
-        formatLoanMoneyProtected(
-          paymentBefore?.commercialPrincipalBefore ?? row.commercialPrincipal,
-          masked: amountsMasked,
-        ),
+        formatLoanMoneyProtected(commercialPrincipal, masked: amountsMasked),
       ),
       _PlanColumnKey.commercialInterest => _textCell(
-        formatLoanMoneyProtected(
-          paymentBefore?.commercialInterestBefore ?? row.commercialInterest,
-          masked: amountsMasked,
-        ),
+        formatLoanMoneyProtected(commercialInterest, masked: amountsMasked),
       ),
       _PlanColumnKey.commercialReduction => _textCell(
         formatLoanMoneyProtected(
@@ -795,22 +816,16 @@ class _CompactPlanTable extends StatelessWidget {
       ),
       _PlanColumnKey.providentPayment => _textCell(
         formatLoanMoneyProtected(
-          paymentBefore?.providentPaymentBefore ?? row.providentPayment,
+          providentPayment,
           masked: amountsMasked,
           dashWhenEmpty: true,
         ),
       ),
       _PlanColumnKey.providentPrincipal => _textCell(
-        formatLoanMoneyProtected(
-          paymentBefore?.providentPrincipalBefore ?? row.providentPrincipal,
-          masked: amountsMasked,
-        ),
+        formatLoanMoneyProtected(providentPrincipal, masked: amountsMasked),
       ),
       _PlanColumnKey.providentInterest => _textCell(
-        formatLoanMoneyProtected(
-          paymentBefore?.providentInterestBefore ?? row.providentInterest,
-          masked: amountsMasked,
-        ),
+        formatLoanMoneyProtected(providentInterest, masked: amountsMasked),
       ),
       _PlanColumnKey.providentReduction => _textCell(
         formatLoanMoneyProtected(
@@ -820,13 +835,7 @@ class _CompactPlanTable extends StatelessWidget {
         ),
       ),
       _PlanColumnKey.totalPayment => _textCell(
-        formatLoanMoneyProtected(
-          paymentBefore == null
-              ? row.totalPayment
-              : paymentBefore.commercialPaymentBefore +
-                    paymentBefore.providentPaymentBefore,
-          masked: amountsMasked,
-        ),
+        formatLoanMoneyProtected(totalPayment, masked: amountsMasked),
         bold: true,
       ),
       _PlanColumnKey.totalReduction => _textCell(

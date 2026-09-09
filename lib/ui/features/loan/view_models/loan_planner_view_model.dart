@@ -141,19 +141,19 @@ class LoanPlannerViewModel extends ChangeNotifier {
       final isDue = date != null && !date.isAfter(today);
       if (!isActual && !isDue) continue;
 
-      // A later same-month transaction may have an inserted normal payment
-      // before it; apply that principal while keeping future events excluded.
+      // The first same-month transaction applies its prepayment first and then
+      // the month's single recalculated payment; keep the replay order aligned
+      // with LoanCalculator so commercial/provident balances stay consistent.
+      final commercialPart = detail.amount.clamp(0.0, commercial).toDouble();
+      commercial -= commercialPart;
+      provident -= (detail.amount - commercialPart).clamp(0.0, provident);
+
       commercial = math
           .max(0.0, commercial - detail.commercialPrincipalBefore)
           .toDouble();
       provident = math
           .max(0.0, provident - detail.providentPrincipalBefore)
           .toDouble();
-
-      // The calculator applies prepayments to commercial principal first.
-      final commercialPart = detail.amount.clamp(0.0, commercial).toDouble();
-      commercial -= commercialPart;
-      provident -= (detail.amount - commercialPart).clamp(0.0, provident);
     }
     return (commercial, provident);
   }

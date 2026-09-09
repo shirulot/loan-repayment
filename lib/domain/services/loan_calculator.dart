@@ -438,9 +438,25 @@ class LoanCalculator {
     for (var index = 0; index < prepayments.length; index++) {
       final prepayment = prepayments[index];
       var normalPaymentBefore = const _NormalPayment.zero();
-      if (index > 0 && !normalPaymentApplied) {
-        // A multi-event row defers its single normal payment until after the
-        // first prepayment, so the later transaction uses the reduced balance.
+      final used = math
+          .min(
+            math.max(0.0, prepayment.amount),
+            remainingCommercial + remainingProvident,
+          )
+          .toDouble();
+      final commercialPart = math.min(used, remainingCommercial).toDouble();
+      final providentPart = math
+          .min(math.max(0.0, used - commercialPart), remainingProvident)
+          .toDouble();
+      remainingCommercial -= commercialPart;
+      remainingProvident -= providentPart;
+      commercialPrepayment += commercialPart;
+      providentPrepayment += providentPart;
+
+      if (index == 0 && prepayments.length > 1 && !normalPaymentApplied) {
+        // The first transaction owns the month's only normal payment. Calculate
+        // it after that transaction's prepayment so later payments use the
+        // reduced balance without deducting another payment for each event.
         normalPaymentApplied = true;
         normalPaymentBefore = _normalPayment(
           commercialOpening: remainingCommercial,
@@ -448,7 +464,7 @@ class LoanCalculator {
           remainingTerms: paymentRemainingTerms,
           paymentMonth: _monthAt(
             LoanPlanConfig.parseLoanStartDate('$paymentMonthStart-01')!,
-            index,
+            index + 1,
           ),
           config: config,
         );
@@ -471,20 +487,7 @@ class LoanCalculator {
               .toInt();
         }
       }
-      final used = math
-          .min(
-            math.max(0.0, prepayment.amount),
-            remainingCommercial + remainingProvident,
-          )
-          .toDouble();
-      final commercialPart = math.min(used, remainingCommercial).toDouble();
-      final providentPart = math
-          .min(math.max(0.0, used - commercialPart), remainingProvident)
-          .toDouble();
-      remainingCommercial -= commercialPart;
-      remainingProvident -= providentPart;
-      commercialPrepayment += commercialPart;
-      providentPrepayment += providentPart;
+
       final date = prepayment.repaymentDate;
       final commercialInterestDueNow = _interestDueOnRepaymentDay(
         prepayment: commercialPart,

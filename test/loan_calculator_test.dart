@@ -585,7 +585,7 @@ void main() {
   });
 
   test(
-    'applies another normal payment before a later same-month prepayment',
+    'assigns one recalculated payment to the first same-month prepayment',
     () {
       const multipleRepaymentConfig = LoanPlanConfig(
         commercialOpeningBalance: 10000,
@@ -606,6 +606,8 @@ void main() {
       );
 
       final rows = calculator.calculate(multipleRepaymentConfig, {});
+      final first = rows.first.prepaymentDetails.first;
+      final second = rows.first.prepaymentDetails[1];
 
       expect(rows.first.expectedPrepayment, 3000);
       expect(rows.first.prepaymentDetails, hasLength(2));
@@ -626,15 +628,11 @@ void main() {
         rows.first.prepaymentDetails.last.nextMonthDeferredInterest,
         closeTo(0, 0.001),
       );
-      expect(
-        rows.first.prepaymentDetails.last.commercialPrincipalBefore,
-        closeTo(750, 0.001),
-      );
-      expect(
-        rows.first.prepaymentDetails.last.commercialInterestBefore,
-        closeTo(282.875, 0.001),
-      );
-      expect(rows.first.prepaymentDetails.last.commercialClosing, 6250);
+      expect(first.commercialPrincipalBefore, closeTo(750, 0.001));
+      expect(first.commercialInterestBefore, closeTo(282.875, 0.001));
+      expect(first.commercialClosing, closeTo(8250, 0.001));
+      expect(second.commercialPrincipalBefore, closeTo(0, 0.001));
+      expect(second.commercialClosing, closeTo(6250, 0.001));
       expect(rows[1].remainingTerms, 11);
       expect(rows[1].commercialInterest, closeTo(196.4409722, 0.001));
       expect(
@@ -644,39 +642,40 @@ void main() {
     },
   );
 
-  test(
-    'recalculates the later monthly payment after an earlier prepayment',
-    () {
-      const multipleRepaymentConfig = LoanPlanConfig(
-        commercialOpeningBalance: 10000,
-        commercialAnnualRate: 0.365,
-        remainingTerms: 12,
-        recentPrepayments: [
-          RecentPrepayment(
-            id: 'september-4',
-            amount: 1000,
-            repaymentDate: '2026-09-04',
-          ),
-          RecentPrepayment(
-            id: 'september-20',
-            amount: 2000,
-            repaymentDate: '2026-09-20',
-          ),
-        ],
-      );
+  test('assigns the recalculated monthly payment to the first prepayment', () {
+    const multipleRepaymentConfig = LoanPlanConfig(
+      commercialOpeningBalance: 10000,
+      commercialAnnualRate: 0.365,
+      remainingTerms: 12,
+      recentPrepayments: [
+        RecentPrepayment(
+          id: 'september-4',
+          amount: 1000,
+          repaymentDate: '2026-09-04',
+        ),
+        RecentPrepayment(
+          id: 'september-20',
+          amount: 2000,
+          repaymentDate: '2026-09-20',
+        ),
+      ],
+    );
 
-      final rows = calculator.calculate(multipleRepaymentConfig, {});
-      final september = rows.firstWhere((row) => row.month == '2026-09');
-      final second = september.prepaymentDetails[1];
+    final rows = calculator.calculate(multipleRepaymentConfig, {});
+    final september = rows.firstWhere((row) => row.month == '2026-09');
+    final first = september.prepaymentDetails.first;
+    final second = september.prepaymentDetails[1];
 
-      // One monthly payment is applied after the first prepayment, so its
-      // principal is based on the balance after that earlier prepayment.
-      expect(september.commercialPrincipal, closeTo(10000 / 12, 0.001));
-      expect(second.commercialPrincipalBefore, closeTo(750, 0.001));
-      expect(second.commercialPaymentBefore, closeTo(1023.75, 0.001));
-      expect(september.totalBalance, closeTo(6250, 0.001));
-    },
-  );
+    // The first transaction owns the one monthly payment, recalculated from
+    // the balance after its prepayment; later transactions do not repeat it.
+    expect(september.commercialPrincipal, closeTo(10000 / 12, 0.001));
+    expect(first.commercialPrincipalBefore, closeTo(750, 0.001));
+    expect(first.commercialPaymentBefore, closeTo(1023.75, 0.001));
+    expect(second.commercialPrincipalBefore, closeTo(0, 0.001));
+    expect(second.commercialPaymentBefore, closeTo(0, 0.001));
+    expect(first.commercialClosing, closeTo(8250, 0.001));
+    expect(september.totalBalance, closeTo(6250, 0.001));
+  });
 
   test(
     'applies at most one inserted payment across three calibration events',
@@ -709,8 +708,12 @@ void main() {
 
       expect(august.prepaymentDetails, hasLength(3));
       expect(
-        august.prepaymentDetails[1].commercialPrincipalBefore,
+        august.prepaymentDetails[0].commercialPrincipalBefore,
         closeTo(750, 0.001),
+      );
+      expect(
+        august.prepaymentDetails[1].commercialPrincipalBefore,
+        closeTo(0, 0.001),
       );
       expect(
         august.prepaymentDetails[2].commercialPrincipalBefore,
@@ -730,7 +733,7 @@ void main() {
       recentPrepayments: [
         RecentPrepayment(
           id: 'august-first',
-          amount: 500,
+          amount: 1500,
           repaymentDate: '2026-08-04',
         ),
         RecentPrepayment(
@@ -742,16 +745,21 @@ void main() {
     );
 
     final rows = calculator.calculate(multipleLoanConfig, {});
+    final first = rows.first.prepaymentDetails.first;
     final second = rows.first.prepaymentDetails[1];
 
-    expect(second.commercialPrincipalBefore, closeTo(50, 0.001));
-    expect(second.commercialInterestBefore, closeTo(5.1666667, 0.001));
-    expect(second.providentPrincipalBefore, closeTo(500, 0.001));
-    expect(second.providentInterestBefore, closeTo(25, 0.001));
+    expect(first.commercialPrincipalBefore, closeTo(0, 0.001));
+    expect(first.commercialInterestBefore, closeTo(0, 0.001));
+    expect(first.providentPrincipalBefore, closeTo(450, 0.001));
+    expect(first.providentInterestBefore, closeTo(22.5, 0.001));
+    expect(second.commercialPrincipalBefore, closeTo(0, 0.001));
+    expect(second.providentPrincipalBefore, closeTo(0, 0.001));
+    expect(first.commercialClosing, closeTo(0, 0.001));
+    expect(first.providentClosing, closeTo(4050, 0.001));
     expect(second.commercialClosing, closeTo(0, 0.001));
-    expect(second.providentClosing, closeTo(4450, 0.001));
+    expect(second.providentClosing, closeTo(3550, 0.001));
     expect(rows[1].commercialOpening, closeTo(0, 0.001));
-    expect(rows[1].providentOpening, closeTo(4450, 0.001));
+    expect(rows[1].providentOpening, closeTo(3550, 0.001));
     expect(rows[1].remainingTerms, 9);
 
     final viewModel = LoanPlannerViewModel(
@@ -760,7 +768,7 @@ void main() {
       cacheService: const _NoopCacheService(),
     );
     expect(viewModel.currentCommercialBalance, closeTo(0, 0.001));
-    expect(viewModel.currentProvidentBalance, closeTo(4450, 0.001));
+    expect(viewModel.currentProvidentBalance, closeTo(3550, 0.001));
     viewModel.dispose();
   });
 

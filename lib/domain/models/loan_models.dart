@@ -423,8 +423,8 @@ class LoanPlanRow {
   /// Every dated prepayment used by this month, in actual calculation order.
   final List<String> prepaymentDates;
 
-  /// 明细表按该列表展开同月多笔提前还款；仅在计划行尚未扣除正常月供
-  /// 时，后续交易最多记录一次插入的正常月供。
+  /// 明细表按该列表展开同月多笔提前还款；多笔场景由第一笔明细记录
+  /// 唯一一次按首笔提前还款后余额重算的正常月供。
   final List<LoanPrepaymentDetail> prepaymentDetails;
 
   /// 提前还款日当天应付的利息，不计入用户输入的提前本金。
@@ -481,10 +481,9 @@ class LoanPrepaymentDetail {
   final double commercialClosing;
   final double providentClosing;
 
-  /// The normal-payment components applied immediately before this transaction
-  /// when multiple prepayments share one calendar month. The first transaction
-  /// keeps these values at zero; the single monthly payment is recalculated
-  /// after the earlier prepayment and attached to a later transaction.
+  /// The normal-payment components assigned to this transaction when multiple
+  /// prepayments share one calendar month. The first transaction owns the
+  /// month's single payment, recalculated after its prepayment.
   final double commercialPrincipalBefore;
   final double commercialInterestBefore;
   final double commercialPaymentBefore;
