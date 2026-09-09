@@ -1,13 +1,16 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import '../../../../core/extensions/string_extensions.dart';
 import '../../../../domain/models/loan_models.dart';
-import '../../../theme/loan_palette.dart';
 import '../view_models/loan_planner_view_model.dart';
 import 'loan_plan_formatters.dart';
-import 'loan_plan_gesture_detector.dart';
+import 'loan_plan_mobile_apply_button.dart';
+import 'loan_plan_mobile_cash_flow.dart';
+import 'loan_plan_mobile_header.dart';
+import 'loan_plan_mobile_preview.dart';
+import 'loan_plan_mobile_settings.dart';
 
 /// Compact phone layout that keeps the repayment preview above the fold.
 class MobileLoanPlanLayout extends StatefulWidget {
@@ -71,6 +74,9 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
   FocusNode _focusNodeFor(String key) =>
       _focusNodes.putIfAbsent(key, FocusNode.new);
 
+  TextEditingController _controllerFor(String key) =>
+      _controllers.putIfAbsent(key, TextEditingController.new);
+
   /// Avoids rewriting an active field when its own edit triggers a model sync.
   void _setControllerTextIfIdle(String key, String value) {
     final controller = _controllers.putIfAbsent(key, TextEditingController.new);
@@ -111,17 +117,18 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
   }
 
   double _number(String key, double fallback) =>
-      double.tryParse(_controllers[key]?.text ?? '') ?? fallback;
+      (_controllers[key]?.text ?? '').toDoubleOr(fallback);
 
   double _zeroIfBlank(String key) =>
-      double.tryParse(_controllers[key]?.text ?? '') ?? 0;
+      (_controllers[key]?.text ?? '').toDoubleOr(0);
 
   void _apply() {
     final old = widget.viewModel.config;
     final loanStartDate = _controllers['loanStartDate']?.text.trim() ?? '';
-    final loanTermYears =
-        int.tryParse(_controllers['loanTermYears']?.text ?? '') ?? 0;
-    final hasStartDate = loanStartDate.isNotEmpty;
+    final loanTermYears = (_controllers['loanTermYears']?.text ?? '').toIntOr(
+      0,
+    );
+    final hasStartDate = !loanStartDate.isBlank;
     final hasTermYears = loanTermYears > 0;
     if (hasStartDate != hasTermYears ||
         (hasStartDate &&
@@ -169,8 +176,8 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
       final event = _recentPrepayments[index];
       final value = _controllers[_recentDateKey(event)]?.text.trim() ?? '';
       final amount = _zeroIfBlank(_recentAmountKey(event));
-      if (value.isEmpty && amount <= 0) continue;
-      if (value.isEmpty || LoanPlanConfig.parseLoanStartDate(value) == null) {
+      if (value.isBlank && amount <= 0) continue;
+      if (value.isBlank || LoanPlanConfig.parseLoanStartDate(value) == null) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('每笔提前还款均需同时填写金额和有效日期。')));
@@ -367,50 +374,16 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              20,
-              16,
-              20,
-              MediaQuery.viewInsetsOf(sheetContext).bottom + 20,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  '编辑每月现金流',
-                  style: Theme.of(sheetContext).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _inputField('本月收入', 'monthlySalary', suffix: '元'),
-                _inputField('额外收入', 'monthlyExtraIncome', suffix: '元'),
-                _readonlyField(
-                  '当月月供',
-                  _money(widget.viewModel.currentMonthlyPayment),
-                  suffix: '元',
-                ),
-                _inputField('每月生活费', 'monthlyLivingCost', suffix: '元'),
-                _readonlyField(
-                  '可供提前还贷额',
-                  _money(widget.viewModel.currentAvailablePrepayment),
-                  suffix: '元',
-                  highlight: true,
-                ),
-                const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: _saveCashFlow,
-                  child: const Text('保存现金流'),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+      builder: (_) => LoanMobileCashFlowSheet(
+        viewModel: widget.viewModel,
+        monthlySalaryController: _controllerFor('monthlySalary'),
+        monthlySalaryFocusNode: _focusNodeFor('monthlySalary'),
+        monthlyExtraIncomeController: _controllerFor('monthlyExtraIncome'),
+        monthlyExtraIncomeFocusNode: _focusNodeFor('monthlyExtraIncome'),
+        monthlyLivingCostController: _controllerFor('monthlyLivingCost'),
+        monthlyLivingCostFocusNode: _focusNodeFor('monthlyLivingCost'),
+        onSave: _saveCashFlow,
+      ),
     );
   }
 
@@ -429,49 +402,51 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
-          _pageHeader(context),
+          LoanMobilePageHeader(
+            viewModel: widget.viewModel,
+            onShowInfo: widget.onShowInfo,
+          ),
           const SizedBox(height: 8),
-          _cashFlowSummary(context),
+          LoanMobileCashFlowSummary(
+            config: widget.config,
+            viewModel: widget.viewModel,
+            onTap: _openCashFlowEditor,
+          ),
           const SizedBox(height: 16),
-          _settingsGroup(context),
+          LoanMobileSettingsGroup(
+            config: widget.config,
+            viewModel: widget.viewModel,
+            recentPrepayments: _recentPrepayments,
+            expandedSections: _expandedSections,
+            controllerFor: _controllerFor,
+            focusNodeFor: _focusNodeFor,
+            onPickRepaymentDate: (key) {
+              _pickRepaymentDate(key);
+            },
+            onRecentPrepaymentChanged: _scheduleRecentPrepaymentSync,
+            onAddRecentPrepayment: _addRecentPrepayment,
+            onRemoveRecentPrepayment: _removeRecentPrepayment,
+            onSectionExpansionChanged: (title, expanded) {
+              setState(() {
+                if (expanded) {
+                  _expandedSections.add(title);
+                } else {
+                  _expandedSections.remove(title);
+                }
+              });
+            },
+          ),
           const SizedBox(height: 12),
-          _previewHeader(context),
-          const SizedBox(height: 8),
-          _upcomingPreview(context, _futurePreviewRows(rows)),
+          LoanMobilePreviewSection(
+            viewModel: widget.viewModel,
+            rows: _futurePreviewRows(rows),
+            highlightedMonth: _highlightedPreviewMonth,
+            onViewDetails: widget.onViewDetails,
+            onRowTap: _handlePreviewRowTap,
+          ),
           const SizedBox(height: 18),
-          _gradientApplyButton(),
+          LoanMobileApplyButton(onPressed: _apply),
         ],
-      ),
-    );
-  }
-
-  Widget _gradientApplyButton() {
-    return SizedBox(
-      height: 52,
-      child: DecoratedBox(
-        decoration: const BoxDecoration(
-          borderRadius: BorderRadius.all(Radius.circular(8)),
-          gradient: LinearGradient(
-            colors: [LoanPalette.primary, LoanPalette.primaryGradientEnd],
-          ),
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: const BorderRadius.all(Radius.circular(8)),
-            onTap: _apply,
-            child: const Center(
-              child: Text(
-                '应用并重算',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -508,629 +483,12 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
         .toList(growable: false);
   }
 
-  Widget _pageHeader(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return SizedBox(
-      height: 32,
-      child: Row(
-        children: [
-          Icon(Icons.calculate_outlined, color: colors.primary, size: 22),
-          const SizedBox(width: 8),
-          Text(
-            '提前还贷计算器',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontSize: 18,
-              fontWeight: FontWeight.w500,
-              letterSpacing: -0.4,
-            ),
-          ),
-          const Spacer(),
-          IconButton(
-            tooltip: widget.viewModel.amountsMasked ? '显示金额' : '隐藏金额',
-            onPressed: widget.viewModel.toggleAmountsMasked,
-            icon: Icon(
-              widget.viewModel.amountsMasked
-                  ? Icons.visibility_off_outlined
-                  : Icons.visibility_outlined,
-            ),
-          ),
-          IconButton(
-            tooltip: '使用说明',
-            onPressed: widget.onShowInfo,
-            icon: const Icon(Icons.info_outline_rounded),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _settingsGroup(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerLowest,
-        border: Border.all(
-          color: colors.outlineVariant.withValues(alpha: 0.48),
-        ),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        children: [
-          _compactSection(
-            context,
-            title: '贷款期限',
-            icon: Icons.calendar_month_outlined,
-            summary: _termSummary(),
-            children: [
-              _inputField(
-                '贷款开始日期',
-                'loanStartDate',
-                suffix: 'YYYY-MM',
-                date: true,
-              ),
-              _inputField('贷款总年限', 'loanTermYears', suffix: '年', integer: true),
-              _readonlyField(
-                '剩余期数（自动）',
-                '${widget.viewModel.calculatedRemainingTerms}',
-                suffix: '月',
-              ),
-            ],
-          ),
-          Divider(color: colors.outlineVariant.withValues(alpha: 0.48)),
-          _compactSection(
-            context,
-            title: '本金与利率',
-            icon: Icons.percent_outlined,
-            summary: _currentLoanSummary(),
-            children: [
-              _subsectionLabel(context, '当前贷款余额'),
-              _readonlyField(
-                '当前商贷余额',
-                _money(_currentCommercialBalance()),
-                suffix: '元',
-              ),
-              _readonlyField(
-                '当前公积金余额',
-                _money(_currentProvidentBalance()),
-                suffix: '元',
-              ),
-              _subsectionLabel(context, '初期贷款本金与利率'),
-              _inputField('初期商贷本金', 'commercialOpeningBalance', suffix: '元'),
-              _inputField('初期公积金本金', 'providentOpeningBalance', suffix: '元'),
-              _inputField('商贷年利率', 'commercialAnnualRate', suffix: '%'),
-              _inputField('公积金年利率', 'providentAnnualRate', suffix: '%'),
-            ],
-          ),
-          Divider(color: colors.outlineVariant.withValues(alpha: 0.48)),
-          _compactSection(
-            context,
-            title: '最近三笔提前还款',
-            icon: Icons.track_changes_outlined,
-            summary: _expectedPrepaymentSummary(),
-            children: [
-              ...List<Widget>.generate(
-                _recentPrepayments.length,
-                _recentPrepaymentFields,
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: _addRecentPrepayment,
-                icon: const Icon(Icons.add_outlined, size: 18),
-                label: const Text('添加一笔（保留最近三笔）'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _termSummary() {
-    final years = widget.config.loanTermYears;
-    final terms = widget.viewModel.calculatedRemainingTerms;
-    return years > 0 ? '$terms 期（$years 年）' : '$terms 期';
-  }
-
-  // Current balances do not pre-deduct a scheduled repayment before its date.
-  double _currentCommercialBalance() {
-    return widget.viewModel.currentCommercialBalance;
-  }
-
-  double _currentProvidentBalance() {
-    return widget.viewModel.currentProvidentBalance;
-  }
-
-  String _currentLoanSummary() {
-    return '¥${_money(_currentCommercialBalance() + _currentProvidentBalance())}';
-  }
-
-  String _expectedPrepaymentSummary() {
-    final latest = widget.viewModel.latestPrepaymentOnOrBeforeToday;
-    if (latest == null) return '暂无到期还款';
-    return '¥${_money(latest.actualPrepayment ?? latest.amount)}';
-  }
-
-  /// 仅替换界面文本，保持控制器和计算使用原始金额。
-  String _money(double value) =>
-      formatLoanMoneyProtected(value, masked: widget.viewModel.amountsMasked);
-
-  Widget _subsectionLabel(BuildContext context, String label) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 14, bottom: 2),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.labelMedium?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-
-  Widget _cashFlowSummary(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final config = widget.config;
-    return Material(
-      color: colors.primaryContainer.withValues(alpha: 0.16),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: _openCashFlowEditor,
-        child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: colors.outlineVariant.withValues(alpha: 0.48),
-            ),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: GridView.count(
-                  crossAxisCount: 2,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  childAspectRatio: 3.25,
-                  children: [
-                    _cashMetric(
-                      context,
-                      '本月收入',
-                      config.monthlySalary,
-                      Icons.account_balance_wallet_outlined,
-                    ),
-                    _cashMetric(
-                      context,
-                      '额外收入',
-                      config.monthlyExtraIncome,
-                      Icons.card_giftcard_outlined,
-                    ),
-                    _cashMetric(
-                      context,
-                      '当月月供',
-                      widget.viewModel.currentMonthlyPayment,
-                      Icons.credit_card_outlined,
-                      accent: true,
-                    ),
-                    _cashMetric(
-                      context,
-                      '每月生活费',
-                      config.monthlyLivingCost,
-                      Icons.coffee_outlined,
-                    ),
-                  ],
-                ),
-              ),
-              Divider(
-                height: 1,
-                color: colors.outlineVariant.withValues(alpha: 0.48),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.currency_yen_rounded,
-                      color: colors.primary,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '可供提前还贷额',
-                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      '¥${_money(widget.viewModel.currentAvailablePrepayment)}',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontSize: 18,
-                        color: colors.error,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    Icon(Icons.chevron_right, color: colors.onSurfaceVariant),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _cashMetric(
-    BuildContext context,
-    String label,
-    double value,
-    IconData icon, {
-    bool accent = false,
-  }) {
-    final colors = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 3),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: colors.onSurfaceVariant,
-              fontSize: 11,
-            ),
-          ),
-          const SizedBox(height: 7),
-          Row(
-            children: [
-              Icon(
-                icon,
-                size: 18,
-                color: accent ? colors.error : colors.primary,
-              ),
-              const SizedBox(width: 5),
-              Expanded(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '¥${_money(value)}',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.2,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _compactSection(
-    BuildContext context, {
-    required String title,
-    required IconData icon,
-    required String summary,
-    required List<Widget> children,
-  }) {
-    final colors = Theme.of(context).colorScheme;
-    final isExpanded = _expandedSections.contains(title);
-    return ExpansionTile(
-      onExpansionChanged: (expanded) {
-        setState(() {
-          if (expanded) {
-            _expandedSections.add(title);
-          } else {
-            _expandedSections.remove(title);
-          }
-        });
-      },
-      tilePadding: const EdgeInsets.symmetric(horizontal: 14),
-      childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-      visualDensity: const VisualDensity(vertical: -1),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
-      collapsedShape: const RoundedRectangleBorder(),
-      leading: Icon(icon, size: 21, color: colors.primary),
-      title: Text(
-        title,
-        style: Theme.of(
-          context,
-        ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w400),
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 112),
-            child: Text(
-              summary,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(
-                context,
-              ).textTheme.labelSmall?.copyWith(color: colors.onSurfaceVariant),
-            ),
-          ),
-          AnimatedRotation(
-            turns: isExpanded ? 0.5 : 0,
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOutCubic,
-            child: Icon(
-              Icons.expand_more,
-              size: 20,
-              color: colors.onSurfaceVariant,
-            ),
-          ),
-        ],
-      ),
-      children: children,
-    );
-  }
-
-  Widget _previewHeader(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            '未来三个月还款预览',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w400),
-          ),
-        ),
-        TextButton.icon(
-          onPressed: widget.onViewDetails,
-          iconAlignment: IconAlignment.end,
-          icon: const Icon(Icons.chevron_right, size: 18),
-          label: const Text('查看详情'),
-        ),
-      ],
-    );
-  }
-
-  Widget _upcomingPreview(BuildContext context, List<LoanPlanRow> rows) {
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      decoration: BoxDecoration(
-        color: colors.surface,
-        border: Border.all(
-          color: colors.outlineVariant.withValues(alpha: 0.48),
-        ),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        children: [
-          _previewRow(
-            context,
-            month: '月份',
-            expected: '预计提前\n还款额',
-            balance: '剩余\n本金',
-            header: true,
-          ),
-          ...rows.map(
-            (row) => _previewRow(
-              context,
-              month: _displayPreviewMonth(row.month),
-              expected: '¥${_money(row.expectedPrepayment)}',
-              balance: '¥${_money(row.totalBalance)}',
-              selected: row.month == _highlightedPreviewMonth,
-              onTap: () => _handlePreviewRowTap(row.month),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 11),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                '单击选中月份，再次单击进入详情。以上为预测结果，实际以还款后银行数据为准。',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// A second single tap on the selected preview row opens its month detail.
   void _handlePreviewRowTap(String month) {
     if (_highlightedPreviewMonth == month) {
       widget.onViewMonth(month);
       return;
     }
     setState(() => _highlightedPreviewMonth = month);
-  }
-
-  Widget _previewRow(
-    BuildContext context, {
-    required String month,
-    required String expected,
-    required String balance,
-    bool header = false,
-    bool selected = false,
-    VoidCallback? onTap,
-  }) {
-    final style = TextStyle(
-      fontSize: header ? 12 : 12,
-      color: header
-          ? Theme.of(context).colorScheme.onSurfaceVariant
-          : Theme.of(context).colorScheme.onSurface,
-      fontWeight: header ? FontWeight.w500 : FontWeight.w400,
-    );
-    return Material(
-      color: Colors.transparent,
-      child: LoanPlanGestureDetector(
-        onTap: onTap,
-        child: Container(
-          height: header ? 34 : 44,
-          decoration: BoxDecoration(
-            color: selected
-                ? Theme.of(context).colorScheme.secondaryContainer
-                : header
-                ? Theme.of(context).colorScheme.surfaceContainerHigh
-                : null,
-            border: Border(
-              bottom: BorderSide(
-                color: Theme.of(
-                  context,
-                ).colorScheme.outlineVariant.withValues(alpha: 0.48),
-              ),
-            ),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: [
-              Expanded(flex: 3, child: _previewCell(month, style)),
-              Expanded(
-                flex: 4,
-                child: _previewCell(
-                  expected,
-                  header
-                      ? style
-                      : style.copyWith(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                ),
-              ),
-              Expanded(
-                flex: 5,
-                child: _previewCell(balance, style, withArrow: !header),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _previewCell(String value, TextStyle style, {bool withArrow = false}) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Flexible(
-          child: Text(
-            value,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: style,
-          ),
-        ),
-        if (withArrow)
-          Icon(
-            Icons.chevron_right,
-            size: 18,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-      ],
-    );
-  }
-
-  Widget _inputField(
-    String label,
-    String key, {
-    required String suffix,
-    bool integer = false,
-    bool date = false,
-    bool enabled = true,
-  }) {
-    final fieldEnabled =
-        enabled && !(suffix == '元' && widget.viewModel.amountsMasked);
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: TextField(
-        controller: _controllers[key],
-        focusNode: _focusNodeFor(key),
-        enabled: fieldEnabled,
-        readOnly: date,
-        onTap: date && fieldEnabled ? () => _pickRepaymentDate(key) : null,
-        onChanged: key.startsWith('recentPrepayment-')
-            ? (_) => _scheduleRecentPrepaymentSync()
-            : null,
-        obscureText: suffix == '元' && widget.viewModel.amountsMasked,
-        obscuringCharacter: '*',
-        keyboardType: date
-            ? TextInputType.datetime
-            : TextInputType.numberWithOptions(decimal: !integer),
-        inputFormatters: [
-          FilteringTextInputFormatter.allow(
-            RegExp(
-              date
-                  ? r'[0-9-]'
-                  : integer
-                  ? r'[0-9]'
-                  : r'[0-9.]',
-            ),
-          ),
-        ],
-        style: TextStyle(
-          fontSize: 14,
-          color: Theme.of(context).colorScheme.primary,
-        ),
-        decoration: InputDecoration(
-          labelText: label,
-          suffixText: suffix,
-          hintText: date ? 'YYYY-MM-DD' : null,
-          suffixIcon: date
-              ? IconButton(
-                  tooltip: '选择还贷日期',
-                  onPressed: fieldEnabled
-                      ? () => _pickRepaymentDate(key)
-                      : null,
-                  icon: const Icon(Icons.calendar_month_outlined),
-                )
-              : null,
-          isDense: true,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 11,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _recentPrepaymentFields(int index) {
-    final event = _recentPrepayments[index];
-    final isSettled = event.isSettled || event.actualPrepayment != null;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _inputField(
-          '第 ${index + 1} 笔金额',
-          _recentAmountKey(event),
-          suffix: '元',
-          enabled: !isSettled,
-        ),
-        _inputField(
-          '第 ${index + 1} 笔还款日期',
-          _recentDateKey(event),
-          suffix: isSettled ? '已结清' : '预定日期',
-          date: true,
-          enabled: !isSettled,
-        ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton.icon(
-            onPressed: isSettled ? null : () => _removeRecentPrepayment(index),
-            icon: const Icon(Icons.delete_outline, size: 17),
-            label: const Text('删除此笔'),
-          ),
-        ),
-      ],
-    );
   }
 
   /// Recent events can use any valid historical or future repayment date.
@@ -1159,43 +517,5 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     _controllers[key]?.text =
         '${selected.year}-${selected.month.toString().padLeft(2, '0')}-${selected.day.toString().padLeft(2, '0')}';
     _commitRecentPrepayments();
-  }
-
-  Widget _readonlyField(
-    String label,
-    String value, {
-    required String suffix,
-    bool highlight = false,
-  }) {
-    final colors = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: label,
-          suffixText: suffix,
-          isDense: true,
-          filled: highlight,
-          fillColor: highlight ? colors.primaryContainer : null,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 11,
-          ),
-        ),
-        child: Text(
-          suffix == '元' && widget.viewModel.amountsMasked ? '****' : value,
-          style: TextStyle(
-            fontSize: 14,
-            color: highlight ? colors.primary : colors.onSurfaceVariant,
-            fontWeight: highlight ? FontWeight.w700 : FontWeight.w400,
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _displayPreviewMonth(String month) {
-    final parts = month.split('-');
-    return '${parts[0]}年${int.parse(parts[1])}月';
   }
 }

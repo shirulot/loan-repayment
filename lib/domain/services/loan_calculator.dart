@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import '../../core/extensions/string_extensions.dart';
 import '../models/loan_models.dart';
 
 class LoanCalculator {
@@ -562,7 +563,7 @@ class LoanCalculator {
   }
 
   String? _validPrepaymentDate(String? value, String month) {
-    if (value == null || value.trim().isEmpty) return null;
+    if (value == null || value.isBlank) return null;
     final date = LoanPlanConfig.parseLoanStartDate(value);
     if (date == null ||
         '${date.year}-${date.month.toString().padLeft(2, '0')}' != month) {

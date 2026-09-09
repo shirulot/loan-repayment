@@ -1,3 +1,5 @@
+import '../../core/extensions/string_extensions.dart';
+
 class LoanPlanConfig {
   const LoanPlanConfig({
     this.commercialOpeningBalance = 0,
@@ -53,14 +55,12 @@ class LoanPlanConfig {
   factory LoanPlanConfig.fromJson(Map<String, dynamic> json) {
     double number(String key, double fallback) {
       final value = json[key];
-      return value is num
-          ? value.toDouble()
-          : double.tryParse('$value') ?? fallback;
+      return value is num ? value.toDouble() : '$value'.toDoubleOr(fallback);
     }
 
     int integer(String key, int fallback) {
       final value = json[key];
-      return value is num ? value.toInt() : int.tryParse('$value') ?? fallback;
+      return value is num ? value.toInt() : '$value'.toIntOr(fallback);
     }
 
     const defaults = LoanPlanConfig();
@@ -224,7 +224,7 @@ class LoanPlanConfig {
 
     final year = int.parse(match.group(1)!);
     final month = int.parse(match.group(2)!);
-    final day = int.tryParse(match.group(3) ?? '1') ?? 1;
+    final day = (match.group(3) ?? '1').toIntOr(1);
     final date = DateTime(year, month, day);
     if (date.year != year || date.month != month || date.day != day) {
       return null;
@@ -250,7 +250,7 @@ class LoanPlanConfig {
 
     double number(String key) {
       final value = json[key];
-      return value is num ? value.toDouble() : double.tryParse('$value') ?? 0;
+      return value is num ? value.toDouble() : '$value'.toDoubleOr(0);
     }
 
     return List<RecentPrepayment>.generate(3, (index) {
@@ -316,9 +316,7 @@ class RecentPrepayment {
     final offset = json['legacyMonthOffset'];
     return RecentPrepayment(
       id: json['id']?.toString() ?? '',
-      amount: amount is num
-          ? amount.toDouble()
-          : double.tryParse('$amount') ?? 0,
+      amount: amount is num ? amount.toDouble() : '$amount'.toDoubleOr(0),
       actualPrepayment: actualPrepayment is num
           ? actualPrepayment.toDouble()
           : double.tryParse('$actualPrepayment'),

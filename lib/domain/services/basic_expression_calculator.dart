@@ -1,3 +1,5 @@
+import '../../core/extensions/string_extensions.dart';
+
 /// Evaluates the four basic operations used by the in-app calculator.
 /// References are resolved by the caller before parsing, so the service stays
 /// independent from the repayment-plan data model.
@@ -92,7 +94,7 @@ class _ExpressionParser {
   }
 
   void _skipWhitespace() {
-    while (_index < source.length && source[_index].trim().isEmpty) {
+    while (_index < source.length && source[_index].isBlank) {
       _index++;
     }
   }

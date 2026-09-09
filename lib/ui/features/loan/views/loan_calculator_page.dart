@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../domain/services/basic_expression_calculator.dart';
 import '../view_models/loan_planner_view_model.dart';
+import 'loan_calculator_reference_widgets.dart';
 import 'loan_plan_formatters.dart';
 
 /// Phone calculator with live references to the repayment-plan overview.
@@ -170,7 +171,7 @@ class _LoanCalculatorPageState extends State<LoanCalculatorPage> {
             runSpacing: 8,
             children: temporaryReferences
                 .map(
-                  (reference) => _ReferenceChip(
+                  (reference) => LoanCalculatorReferenceChip(
                     reference: reference,
                     onSelected: () => _append('【${reference.label}】'),
                   ),
@@ -195,7 +196,7 @@ class _LoanCalculatorPageState extends State<LoanCalculatorPage> {
         ),
         const SizedBox(height: 4),
         if (_showAllReferences)
-          _ReferenceSearch(
+          LoanCalculatorReferenceSearch(
             references: visibleReferences,
             matchesReference: widget.viewModel.matchesCalculatorReference,
             onSelected: (reference) => _append('【${reference.label}】'),
@@ -206,7 +207,7 @@ class _LoanCalculatorPageState extends State<LoanCalculatorPage> {
             runSpacing: 8,
             children: visibleReferences
                 .map(
-                  (reference) => _ReferenceChip(
+                  (reference) => LoanCalculatorReferenceChip(
                     reference: reference,
                     onSelected: () => _append('【${reference.label}】'),
                   ),
@@ -291,66 +292,4 @@ class _LoanCalculatorPageState extends State<LoanCalculatorPage> {
       ],
     );
   }
-}
-
-class _ReferenceSearch extends StatefulWidget {
-  const _ReferenceSearch({
-    required this.references,
-    required this.matchesReference,
-    required this.onSelected,
-  });
-
-  final List<CalculatorReference> references;
-  final bool Function(CalculatorReference reference, String query)
-  matchesReference;
-  final ValueChanged<CalculatorReference> onSelected;
-
-  @override
-  State<_ReferenceSearch> createState() => _ReferenceSearchState();
-}
-
-class _ReferenceSearchState extends State<_ReferenceSearch> {
-  var _query = '';
-
-  @override
-  Widget build(BuildContext context) {
-    final entries = widget.references
-        .where((item) => widget.matchesReference(item, _query))
-        .toList();
-    return Column(
-      children: [
-        TextField(
-          onChanged: (value) => setState(() => _query = value.trim()),
-          decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.search),
-            hintText: '搜索月份、农历月或列名，例如：八月、2026-08',
-          ),
-        ),
-        const SizedBox(height: 8),
-        ...entries.map(
-          (reference) => ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text(reference.label),
-            trailing: Text(formatLoanMoney(reference.value)),
-            onTap: () => widget.onSelected(reference),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ReferenceChip extends StatelessWidget {
-  const _ReferenceChip({required this.reference, required this.onSelected});
-
-  final CalculatorReference reference;
-  final VoidCallback onSelected;
-
-  @override
-  Widget build(BuildContext context) => ActionChip(
-    label: Text(
-      '${reference.label} ${formatLoanEditableNumber(reference.value)}',
-    ),
-    onPressed: onSelected,
-  );
 }
