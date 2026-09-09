@@ -142,13 +142,8 @@ class LoanPlannerViewModel extends ChangeNotifier {
       final isDue = date != null && !date.isAfter(today);
       if (!isActual && !isDue) continue;
 
-      // The calculator applies the prepayment first. Only the first normal
-      // payment component is real; later components are display-only previews
-      // and must not reduce the current balance again.
-      final commercialPart = detail.amount.clamp(0.0, commercial).toDouble();
-      commercial -= commercialPart;
-      provident -= (detail.amount - commercialPart).clamp(0.0, provident);
-
+      // The first detail applies the month's normal payment before its own
+      // prepayment. Later payment values are display-only previews.
       if (!normalPaymentApplied && detail.hasNormalPaymentBefore) {
         normalPaymentApplied = true;
         commercial = math
@@ -158,6 +153,10 @@ class LoanPlannerViewModel extends ChangeNotifier {
             .max(0.0, provident - detail.providentPrincipalBefore)
             .toDouble();
       }
+
+      final commercialPart = detail.amount.clamp(0.0, commercial).toDouble();
+      commercial -= commercialPart;
+      provident -= (detail.amount - commercialPart).clamp(0.0, provident);
     }
     return (commercial, provident);
   }

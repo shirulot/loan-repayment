@@ -447,6 +447,38 @@ class LoanCalculator {
     for (var index = 0; index < prepayments.length; index++) {
       final prepayment = prepayments[index];
       var normalPaymentBefore = const _NormalPayment.zero();
+      if (prepayments.length > 1 && !normalPaymentAlreadyApplied) {
+        // Each detail shows the payment immediately before its own prepayment:
+        // the first uses the opening balance and later details use prior
+        // cumulative prepayments. Only the first payment affects balance.
+        normalPaymentBefore = _normalPayment(
+          commercialOpening: previewCommercial,
+          providentOpening: previewProvident,
+          remainingTerms: previewRemainingTerms,
+          paymentMonth: previewPaymentMonth,
+          config: config,
+        );
+        if (index == 0) {
+          remainingCommercial = math
+              .max(
+                0.0,
+                remainingCommercial - normalPaymentBefore.commercialPrincipal,
+              )
+              .toDouble();
+          remainingProvident = math
+              .max(
+                0.0,
+                remainingProvident - normalPaymentBefore.providentPrincipal,
+              )
+              .toDouble();
+          if (normalPaymentBefore.hasPrincipal) {
+            additionalNormalPayments++;
+            paymentRemainingTerms = math
+                .max(0, paymentRemainingTerms - 1)
+                .toInt();
+          }
+        }
+      }
       final previewUsed = math
           .min(
             math.max(0.0, prepayment.amount),
@@ -478,38 +510,6 @@ class LoanCalculator {
       remainingProvident -= providentPart;
       commercialPrepayment += commercialPart;
       providentPrepayment += providentPart;
-
-      if (prepayments.length > 1 && !normalPaymentAlreadyApplied) {
-        // Each detail is recalculated after its own cumulative prepayment.
-        // Only the first detail applies that recalculated payment to balance.
-        normalPaymentBefore = _normalPayment(
-          commercialOpening: previewCommercial,
-          providentOpening: previewProvident,
-          remainingTerms: previewRemainingTerms,
-          paymentMonth: previewPaymentMonth,
-          config: config,
-        );
-        if (index == 0) {
-          remainingCommercial = math
-              .max(
-                0.0,
-                remainingCommercial - normalPaymentBefore.commercialPrincipal,
-              )
-              .toDouble();
-          remainingProvident = math
-              .max(
-                0.0,
-                remainingProvident - normalPaymentBefore.providentPrincipal,
-              )
-              .toDouble();
-          if (normalPaymentBefore.hasPrincipal) {
-            additionalNormalPayments++;
-            paymentRemainingTerms = math
-                .max(0, paymentRemainingTerms - 1)
-                .toInt();
-          }
-        }
-      }
 
       final date = prepayment.repaymentDate;
       final commercialInterestDueNow = _interestDueOnRepaymentDay(

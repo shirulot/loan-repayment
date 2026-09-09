@@ -836,13 +836,13 @@ void main() {
     expect(viewModel.rows.first.prepaymentDetails, hasLength(2));
     expect(
       viewModel.rows[1].nextMonthBasePaymentReduction,
-      closeTo(379.2140152, 0.001),
+      closeTo(389.3244949, 0.001),
     );
     expect(find.text('下月基础月供减少'), findsOneWidget);
-    expect(find.text('379.21'), findsOneWidget);
-    expect(find.text('本笔后重算商贷月供本金'), findsNWidgets(2));
+    expect(find.text('389.32'), findsOneWidget);
+    expect(find.text('本笔前商贷月供本金'), findsNWidgets(2));
     expect(find.text('750.00'), findsOneWidget);
-    expect(find.text('583.33'), findsOneWidget);
+    expect(find.text('833.33'), findsOneWidget);
   });
 
   testWidgets(
