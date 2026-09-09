@@ -432,12 +432,17 @@ class LoanCalculator {
     var additionalNormalPayments = 0;
     // A calendar month may reduce principal through normal payment only once.
     var normalPaymentApplied = normalPaymentAlreadyApplied;
+    // Later transaction rows retain the recalculated payment information for
+    // display, but only the first transaction applies it to the balance.
+    var normalPaymentForNextDetail = const _NormalPayment.zero();
     final dates = <String>[];
     final details = <LoanPrepaymentDetail>[];
 
     for (var index = 0; index < prepayments.length; index++) {
       final prepayment = prepayments[index];
-      var normalPaymentBefore = const _NormalPayment.zero();
+      var normalPaymentBefore = index == 0
+          ? const _NormalPayment.zero()
+          : normalPaymentForNextDetail;
       final used = math
           .min(
             math.max(0.0, prepayment.amount),
@@ -486,6 +491,18 @@ class LoanCalculator {
               .max(0, paymentRemainingTerms - 1)
               .toInt();
         }
+        normalPaymentForNextDetail = normalPaymentBefore;
+      } else if (index > 0 && index < prepayments.length - 1) {
+        normalPaymentForNextDetail = _normalPayment(
+          commercialOpening: remainingCommercial,
+          providentOpening: remainingProvident,
+          remainingTerms: paymentRemainingTerms,
+          paymentMonth: _monthAt(
+            LoanPlanConfig.parseLoanStartDate('$paymentMonthStart-01')!,
+            index + 1,
+          ),
+          config: config,
+        );
       }
 
       final date = prepayment.repaymentDate;

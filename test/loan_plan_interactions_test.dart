@@ -840,8 +840,8 @@ void main() {
     );
     expect(find.text('下月基础月供减少'), findsOneWidget);
     expect(find.text('379.21'), findsOneWidget);
-    expect(find.text('本笔前商贷月供本金'), findsOneWidget);
-    expect(find.text('750.00'), findsOneWidget);
+    expect(find.text('本笔前商贷月供本金'), findsNWidgets(2));
+    expect(find.text('750.00'), findsNWidgets(2));
   });
 
   testWidgets(

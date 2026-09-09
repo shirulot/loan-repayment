@@ -131,6 +131,7 @@ class LoanPlannerViewModel extends ChangeNotifier {
     }
     var commercial = currentRow.commercialOpening;
     var provident = currentRow.providentOpening;
+    var normalPaymentApplied = false;
 
     final today = _calculator.calculationDate;
     for (final detail in currentRow.prepaymentDetails) {
@@ -141,19 +142,22 @@ class LoanPlannerViewModel extends ChangeNotifier {
       final isDue = date != null && !date.isAfter(today);
       if (!isActual && !isDue) continue;
 
-      // The first same-month transaction applies its prepayment first and then
-      // the month's single recalculated payment; keep the replay order aligned
-      // with LoanCalculator so commercial/provident balances stay consistent.
+      // The calculator applies the prepayment first. Only the first normal
+      // payment component is real; later components are display-only previews
+      // and must not reduce the current balance again.
       final commercialPart = detail.amount.clamp(0.0, commercial).toDouble();
       commercial -= commercialPart;
       provident -= (detail.amount - commercialPart).clamp(0.0, provident);
 
-      commercial = math
-          .max(0.0, commercial - detail.commercialPrincipalBefore)
-          .toDouble();
-      provident = math
-          .max(0.0, provident - detail.providentPrincipalBefore)
-          .toDouble();
+      if (!normalPaymentApplied && detail.hasNormalPaymentBefore) {
+        normalPaymentApplied = true;
+        commercial = math
+            .max(0.0, commercial - detail.commercialPrincipalBefore)
+            .toDouble();
+        provident = math
+            .max(0.0, provident - detail.providentPrincipalBefore)
+            .toDouble();
+      }
     }
     return (commercial, provident);
   }
