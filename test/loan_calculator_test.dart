@@ -644,6 +644,81 @@ void main() {
     },
   );
 
+  test(
+    'does not deduct a second monthly payment in a non-calibration month',
+    () {
+      const multipleRepaymentConfig = LoanPlanConfig(
+        commercialOpeningBalance: 10000,
+        commercialAnnualRate: 0.365,
+        remainingTerms: 12,
+        recentPrepayments: [
+          RecentPrepayment(
+            id: 'september-4',
+            amount: 1000,
+            repaymentDate: '2026-09-04',
+          ),
+          RecentPrepayment(
+            id: 'september-20',
+            amount: 2000,
+            repaymentDate: '2026-09-20',
+          ),
+        ],
+      );
+
+      final rows = calculator.calculate(multipleRepaymentConfig, {});
+      final september = rows.firstWhere((row) => row.month == '2026-09');
+      final second = september.prepaymentDetails[1];
+
+      // September's row payment is already included before the first event.
+      expect(september.commercialPrincipal, closeTo(10000 / 12, 0.001));
+      expect(second.commercialPrincipalBefore, closeTo(0, 0.001));
+      expect(second.commercialPaymentBefore, closeTo(0, 0.001));
+      expect(september.totalBalance, closeTo(6166.6667, 0.001));
+    },
+  );
+
+  test(
+    'applies at most one inserted payment across three calibration events',
+    () {
+      const multipleRepaymentConfig = LoanPlanConfig(
+        commercialOpeningBalance: 10000,
+        commercialAnnualRate: 0.365,
+        remainingTerms: 12,
+        recentPrepayments: [
+          RecentPrepayment(
+            id: 'august-4',
+            amount: 1000,
+            repaymentDate: '2026-08-04',
+          ),
+          RecentPrepayment(
+            id: 'august-20',
+            amount: 2000,
+            repaymentDate: '2026-08-20',
+          ),
+          RecentPrepayment(
+            id: 'august-25',
+            amount: 3000,
+            repaymentDate: '2026-08-25',
+          ),
+        ],
+      );
+
+      final rows = calculator.calculate(multipleRepaymentConfig, {});
+      final august = rows.first;
+
+      expect(august.prepaymentDetails, hasLength(3));
+      expect(
+        august.prepaymentDetails[1].commercialPrincipalBefore,
+        closeTo(750, 0.001),
+      );
+      expect(
+        august.prepaymentDetails[2].commercialPrincipalBefore,
+        closeTo(0, 0.001),
+      );
+      expect(august.totalBalance, closeTo(3250, 0.001));
+    },
+  );
+
   test('applies the inserted payment to both loan balances', () {
     const multipleLoanConfig = LoanPlanConfig(
       commercialOpeningBalance: 1000,

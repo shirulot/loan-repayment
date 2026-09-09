@@ -127,6 +127,8 @@ class LoanCalculator {
         remainingTermsForAdditionalPayment: isCalibrationMonth
             ? remainingTerms
             : math.max(0, remainingTerms - 1).toInt(),
+        // 非校准月的计划行已经先扣除当月正常月供，后续同月交易不能重复扣除。
+        normalPaymentAlreadyApplied: !isCalibrationMonth,
         paymentMonthStart: month,
         config: config,
       );
@@ -303,9 +305,10 @@ class LoanCalculator {
     return math.min(opening, opening / remainingTerms);
   }
 
-  /// Calculates an inserted normal-payment step between two same-month
+  /// Calculates an optional normal-payment step between same-month
   /// prepayments. Interest is paid as part of that step; only principal
-  /// reduces the loan balances.
+  /// reduces the loan balances. The caller controls whether the calendar
+  /// row has already applied that month's normal payment.
   _NormalPayment _normalPayment({
     required double commercialOpening,
     required double providentOpening,
@@ -405,6 +408,7 @@ class LoanCalculator {
     required double commercialBalance,
     required double providentBalance,
     required int remainingTermsForAdditionalPayment,
+    required bool normalPaymentAlreadyApplied,
     required String paymentMonthStart,
     required LoanPlanConfig config,
   }) {
@@ -415,13 +419,18 @@ class LoanCalculator {
     var interestDueNow = 0.0;
     var paymentRemainingTerms = remainingTermsForAdditionalPayment;
     var additionalNormalPayments = 0;
+    // A calendar month may reduce principal through normal payment only once.
+    var normalPaymentApplied = normalPaymentAlreadyApplied;
     final dates = <String>[];
     final details = <LoanPrepaymentDetail>[];
 
     for (var index = 0; index < prepayments.length; index++) {
       final prepayment = prepayments[index];
       var normalPaymentBefore = const _NormalPayment.zero();
-      if (index > 0) {
+      if (index > 0 && !normalPaymentApplied) {
+        // The calibration row has no regular payment of its own, so use the
+        // first later transaction as the single point to apply that payment.
+        normalPaymentApplied = true;
         normalPaymentBefore = _normalPayment(
           commercialOpening: remainingCommercial,
           providentOpening: remainingProvident,

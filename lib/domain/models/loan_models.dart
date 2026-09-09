@@ -423,7 +423,8 @@ class LoanPlanRow {
   /// Every dated prepayment used by this month, in actual calculation order.
   final List<String> prepaymentDates;
 
-  /// 明细表按该列表展开同月多笔提前还款；从第二笔起会记录插入的正常月供。
+  /// 明细表按该列表展开同月多笔提前还款；仅在计划行尚未扣除正常月供
+  /// 时，后续交易最多记录一次插入的正常月供。
   final List<LoanPrepaymentDetail> prepaymentDetails;
 
   /// 提前还款日当天应付的利息，不计入用户输入的提前本金。
