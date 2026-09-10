@@ -4,6 +4,7 @@ import '../view_models/loan_planner_view_model.dart';
 import 'loan_plan_detail_page.dart';
 import 'loan_calculator_page.dart';
 import 'loan_plan_card.dart';
+import 'loan_plan_frequency_selector.dart';
 import 'loan_plan_intro_banner.dart';
 import 'loan_plan_mobile_layout.dart';
 import 'loan_plan_mobile_navigation.dart';
@@ -62,6 +63,12 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
       _mobileTabIndex = index;
       _pendingDetailMonth = null;
     });
+  }
+
+  void _updatePrepaymentFrequency(int months) {
+    viewModel.updateConfig(
+      viewModel.config.copyWith(prepaymentFrequencyMonths: months),
+    );
   }
 
   void _showMobileInfo() {
@@ -151,6 +158,12 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+                          LoanPlanFrequencySelector(
+                            frequencyMonths:
+                                viewModel.config.prepaymentFrequencyMonths,
+                            onChanged: _updatePrepaymentFrequency,
+                          ),
+                          const SizedBox(height: 12),
                           LoanPlanIntroBanner(viewModel: viewModel),
                           const SizedBox(height: 16),
                           LoanPlanSummaryStrip(viewModel: viewModel),

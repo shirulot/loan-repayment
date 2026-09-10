@@ -216,7 +216,8 @@ void main() {
           config.monthlySalary -
               viewModel.currentMonthlyPayment -
               config.monthlyLivingCost +
-              config.monthlyExtraIncome,
+              config.monthlyExtraIncome -
+              config.monthlyOtherExpense,
           0.001,
         ),
       );
@@ -235,6 +236,7 @@ void main() {
       'monthlySalary': 14000,
       'monthlyExtraIncome': 800,
       'monthlyLivingCost': 3200,
+      'monthlyOtherExpense': 600,
       'remainingTerms': 180,
     });
 
@@ -243,6 +245,7 @@ void main() {
     expect(restored.monthlySalary, 14000);
     expect(restored.monthlyExtraIncome, 800);
     expect(restored.monthlyLivingCost, 3200);
+    expect(restored.monthlyOtherExpense, 600);
     expect(restored.remainingTerms, 180);
     expect(restored.commercialOpeningBalance, 0);
   });
@@ -254,7 +257,22 @@ void main() {
     expect(freshConfig.providentOpeningBalance, 0);
     expect(freshConfig.monthlySalary, 0);
     expect(freshConfig.monthlyLivingCost, 0);
+    expect(freshConfig.monthlyOtherExpense, 0);
     expect(freshConfig.fixedAugustPrepayment, 0);
+    expect(freshConfig.prepaymentFrequencyMonths, 1);
+  });
+
+  test('restores and exports the prepayment frequency', () {
+    final restored = LoanPlanConfig.fromJson({'prepaymentFrequencyMonths': 3});
+
+    expect(restored.prepaymentFrequencyMonths, 3);
+    expect(restored.toJson()['prepaymentFrequencyMonths'], 3);
+    expect(
+      LoanPlanConfig.fromJson({
+        'prepaymentFrequencyMonths': 0,
+      }).prepaymentFrequencyMonths,
+      1,
+    );
   });
 
   test('restores parameters and actual repayments from a JSON backup', () {
@@ -361,10 +379,100 @@ void main() {
         extraIncomeConfig.monthlySalary -
             rows[1].totalPayment -
             extraIncomeConfig.monthlyLivingCost +
-            extraIncomeConfig.monthlyExtraIncome,
+            extraIncomeConfig.monthlyExtraIncome -
+            extraIncomeConfig.monthlyOtherExpense,
         0.001,
       ),
     );
+  });
+
+  test('other expense reduces the available prepayment amount', () {
+    final otherExpenseConfig = config.copyWith(monthlyOtherExpense: 1200);
+    final rows = calculator.calculate(otherExpenseConfig, {});
+
+    expect(
+      rows[1].availableFunds,
+      closeTo(
+        otherExpenseConfig.monthlySalary -
+            rows[1].totalPayment -
+            otherExpenseConfig.monthlyLivingCost +
+            otherExpenseConfig.monthlyExtraIncome -
+            otherExpenseConfig.monthlyOtherExpense,
+        0.001,
+      ),
+    );
+  });
+
+  test('shows other expense in home references only when it is nonzero', () {
+    final viewModel = LoanPlannerViewModel(
+      calculator: calculator,
+      initialConfig: config,
+    );
+    addTearDown(viewModel.dispose);
+
+    expect(
+      viewModel.calculatorReferences.map((reference) => reference.label),
+      isNot(contains('其他消费')),
+    );
+
+    viewModel.updateConfig(config.copyWith(monthlyOtherExpense: 1200));
+
+    expect(
+      viewModel.calculatorReferences.map((reference) => reference.label),
+      contains('其他消费'),
+    );
+    expect(
+      viewModel.currentAvailablePrepayment,
+      closeTo(viewModel.rows[1].availableFunds, 0.001),
+    );
+  });
+
+  test(
+    'frequency accumulates available cash until the next planning month',
+    () {
+      const frequencyConfig = LoanPlanConfig(
+        commercialOpeningBalance: 120000,
+        commercialAnnualRate: 0,
+        remainingTerms: 12,
+        monthlySalary: 10000,
+        prepaymentFrequencyMonths: 2,
+      );
+      final rows = calculator.calculate(frequencyConfig, {});
+
+      expect(rows[0].expectedPrepayment, 10000);
+      expect(rows[1].expectedPrepayment, 0);
+      final accumulatedFunds = rows[1].availableFunds + rows[2].availableFunds;
+      expect(
+        rows[2].expectedPrepayment,
+        closeTo((accumulatedFunds / 10).ceilToDouble() * 10, 0.001),
+      );
+      expect(rows[2].expectedPrepayment, greaterThan(rows[2].availableFunds));
+      expect(rows[3].expectedPrepayment, 0);
+    },
+  );
+
+  test('a recent repayment overrides a skipped planning month', () {
+    const frequencyConfig = LoanPlanConfig(
+      commercialOpeningBalance: 120000,
+      commercialAnnualRate: 0,
+      remainingTerms: 12,
+      monthlySalary: 10000,
+      prepaymentFrequencyMonths: 3,
+      recentPrepayments: [
+        RecentPrepayment(
+          id: 'september-repayment',
+          amount: 5000,
+          actualPrepayment: 5000,
+          repaymentDate: '2026-09-15',
+          isSettled: true,
+        ),
+      ],
+    );
+    final rows = calculator.calculate(frequencyConfig, {});
+    final september = rows.firstWhere((row) => row.month == '2026-09');
+
+    expect(september.actualPrepayment, 5000);
+    expect(september.expectedPrepayment, 5000);
   });
 
   test('zero recent expected amounts fall back to available funds', () {

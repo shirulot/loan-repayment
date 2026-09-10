@@ -10,6 +10,7 @@ import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_detail_p
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_calendar_formatters.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_formatters.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_mobile_layout.dart';
+import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_mobile_preview.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_page.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_month_detail_page.dart';
 
@@ -66,7 +67,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final recentSection = find.text('最近三笔提前还款');
+    final recentSection = find.text('最近3个月提前还款');
     await tester.ensureVisible(recentSection);
     await tester.tap(recentSection);
     await tester.pumpAndSettle();
@@ -87,6 +88,78 @@ void main() {
 
     expect(controller.text, '1');
     expect(controller.selection, const TextSelection.collapsed(offset: 1));
+  });
+
+  testWidgets('selecting a repayment frequency updates the home plan', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final viewModel = createViewModel();
+    addTearDown(viewModel.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(home: LoanPlanPage(viewModel: viewModel)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('每月'), findsOneWidget);
+    await tester.tap(find.text('还款频率'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('选择还款频率'), findsOneWidget);
+    expect(find.text('只反映规划，实际按照最近3个月进行；如果没有最近还款记录，则按照预期进行。'), findsOneWidget);
+    await tester.tap(find.text('每2个月'));
+    await tester.pumpAndSettle();
+
+    expect(viewModel.config.prepaymentFrequencyMonths, 2);
+    expect(find.text('每2个月'), findsOneWidget);
+    expect(find.text('最近6个月提前还款'), findsOneWidget);
+    expect(find.text('未来3期还款预览'), findsOneWidget);
+    final previewRows = tester
+        .widgetList<LoanMobilePreviewRow>(find.byType(LoanMobilePreviewRow))
+        .toList();
+    expect(previewRows, hasLength(4));
+    expect(previewRows.map((row) => row.month), [
+      '月份',
+      '2026年8月',
+      '2026年10月',
+      '2026年12月',
+    ]);
+    final augustPlanRow = viewModel.rows.firstWhere(
+      (row) => row.month == '2026-08',
+    );
+    expect(
+      previewRows[1].expected,
+      '¥${formatLoanMoney(augustPlanRow.expectedPrepayment + viewModel.currentAvailablePrepayment)}',
+    );
+
+    final recentSection = find.text('最近6个月提前还款');
+    await tester.ensureVisible(recentSection);
+    await tester.tap(recentSection);
+    await tester.pumpAndSettle();
+
+    final repaymentDateFields = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          widget.decoration?.labelText?.contains('还款日期') == true,
+    );
+    expect(repaymentDateFields, findsNWidgets(6));
+
+    final sixthAmountField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.labelText == '第 6 笔金额',
+    );
+    await tester.ensureVisible(sixthAmountField);
+    await tester.enterText(sixthAmountField, '6000');
+    await tester.pump(const Duration(milliseconds: 351));
+
+    expect(viewModel.config.recentPrepayments, hasLength(6));
+    expect(
+      viewModel.config.recentPrepayments.map((event) => event.amount),
+      contains(6000),
+    );
   });
 
   testWidgets(
@@ -138,7 +211,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final recentSection = find.text('最近三笔提前还款');
+      final recentSection = find.text('最近3个月提前还款');
       await tester.ensureVisible(recentSection);
       await tester.tap(recentSection);
       await tester.pumpAndSettle();
@@ -226,6 +299,139 @@ void main() {
     },
   );
 
+  test('settles a dated recent repayment from the following day', () {
+    const event = RecentPrepayment(
+      id: 'settled-next-day',
+      amount: 31000,
+      repaymentDate: '2026-09-20',
+    );
+    final onRepaymentDay = LoanPlannerViewModel(
+      calculator: LoanCalculator(currentDate: DateTime(2026, 9, 20)),
+      initialConfig: const LoanPlanConfig(recentPrepayments: [event]),
+    );
+    final followingDay = LoanPlannerViewModel(
+      calculator: LoanCalculator(currentDate: DateTime(2026, 9, 21)),
+      initialConfig: const LoanPlanConfig(recentPrepayments: [event]),
+    );
+
+    expect(onRepaymentDay.isRecentPrepaymentSettled(event), isFalse);
+    expect(followingDay.isRecentPrepaymentSettled(event), isTrue);
+    onRepaymentDay.dispose();
+    followingDay.dispose();
+  });
+
+  testWidgets(
+    'locks settled repayment until correction and keeps delete enabled',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final viewModel = LoanPlannerViewModel(
+        calculator: LoanCalculator(currentDate: DateTime(2026, 9, 21)),
+        initialConfig: const LoanPlanConfig(
+          commercialOpeningBalance: 100000,
+          remainingTerms: 100,
+          recentPrepayments: [
+            RecentPrepayment(
+              id: 'settled-31000',
+              amount: 31000,
+              repaymentDate: '2026-09-20',
+            ),
+            RecentPrepayment(
+              id: 'future-one',
+              amount: 10000,
+              repaymentDate: '2026-10-20',
+            ),
+            RecentPrepayment(
+              id: 'future-two',
+              amount: 12000,
+              repaymentDate: '2026-11-20',
+            ),
+          ],
+        ),
+      );
+      addTearDown(viewModel.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MobileLoanPlanLayout(
+              viewModel: viewModel,
+              config: viewModel.config,
+              onViewDetails: () {},
+              onViewMonth: (_) {},
+              onShowInfo: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final recentSection = find.text('最近3个月提前还款');
+      await tester.ensureVisible(recentSection);
+      await tester.tap(recentSection);
+      await tester.pumpAndSettle();
+
+      Finder fieldFinder(String label) => find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.labelText == label,
+      );
+
+      TextField field(String label) =>
+          tester.widget<TextField>(fieldFinder(label));
+
+      expect(field('第 1 笔金额').controller!.text, '31000');
+      expect(field('第 1 笔金额').enabled, isFalse);
+      expect(field('第 1 笔还款日期').enabled, isFalse);
+      expect(find.text('已结清'), findsOneWidget);
+
+      final correctionButton = find.widgetWithText(TextButton, '修正');
+      expect(correctionButton, findsOneWidget);
+      expect(tester.widget<TextButton>(correctionButton).onPressed, isNotNull);
+      await tester.ensureVisible(correctionButton);
+      await tester.tap(correctionButton);
+      await tester.pump();
+
+      expect(field('第 1 笔金额').enabled, isTrue);
+      expect(field('第 1 笔还款日期').enabled, isTrue);
+      final confirmationButton = find.widgetWithText(TextButton, '确认');
+      expect(confirmationButton, findsOneWidget);
+      expect(
+        tester.widget<TextButton>(confirmationButton).onPressed,
+        isNotNull,
+      );
+
+      await tester.enterText(fieldFinder('第 1 笔金额'), '32000');
+      tester.widget<TextButton>(confirmationButton).onPressed!();
+      await tester.pump();
+      // Confirmation must win over the delayed amount synchronization.
+      await tester.pump(const Duration(milliseconds: 351));
+
+      expect(field('第 1 笔金额').enabled, isFalse);
+      expect(field('第 1 笔还款日期').enabled, isFalse);
+      expect(find.widgetWithText(TextButton, '确认'), findsNothing);
+      expect(find.widgetWithText(TextButton, '修正'), findsOneWidget);
+      expect(
+        viewModel.config.recentPrepayments
+            .firstWhere((event) => event.id == 'settled-31000')
+            .amount,
+        32000,
+      );
+
+      final deleteButton = find.widgetWithText(TextButton, '删除此笔').first;
+      expect(tester.widget<TextButton>(deleteButton).onPressed, isNotNull);
+      tester.widget<TextButton>(deleteButton).onPressed!();
+      await tester.pumpAndSettle();
+
+      expect(
+        viewModel.config.recentPrepayments.any(
+          (event) => event.id == 'settled-31000',
+        ),
+        isFalse,
+      );
+    },
+  );
+
   testWidgets('keeps newly added repayments in ascending date order', (
     tester,
   ) async {
@@ -273,11 +479,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final recentSection = find.text('最近三笔提前还款');
+    final recentSection = find.text('最近3个月提前还款');
     await tester.ensureVisible(recentSection);
     await tester.tap(recentSection);
     await tester.pumpAndSettle();
-    final addButton = find.widgetWithText(OutlinedButton, '添加一笔（保留最近三笔）');
+    final addButton = find.widgetWithText(OutlinedButton, '添加一笔（保留最近3个月）');
     tester.widget<OutlinedButton>(addButton).onPressed!();
     await tester.pumpAndSettle();
 

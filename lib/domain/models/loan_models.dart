@@ -1,6 +1,23 @@
 import '../../core/extensions/string_extensions.dart';
 
 class LoanPlanConfig {
+  static const defaultPrepaymentFrequencyMonths = 1;
+  static const recentPrepaymentPlanningCycles = 3;
+  static const prepaymentFrequencyOptions = <int>[
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+  ];
+
   const LoanPlanConfig({
     this.commercialOpeningBalance = 0,
     this.providentOpeningBalance = 0,
@@ -12,6 +29,8 @@ class LoanPlanConfig {
     this.monthlySalary = 0,
     this.monthlyExtraIncome = 0,
     this.monthlyLivingCost = 0,
+    this.monthlyOtherExpense = 0,
+    this.prepaymentFrequencyMonths = defaultPrepaymentFrequencyMonths,
     this.fixedAugustPrepayment = 0,
     this.fixedSeptemberPrepayment = 0,
     this.fixedOctoberPrepayment = 0,
@@ -38,6 +57,16 @@ class LoanPlanConfig {
   final double monthlySalary;
   final double monthlyExtraIncome;
   final double monthlyLivingCost;
+
+  /// Optional monthly spending deducted from the prepayment budget.
+  final double monthlyOtherExpense;
+
+  /// The interval used when projecting future planned prepayments.
+  final int prepaymentFrequencyMonths;
+
+  /// Keeps recent repayment inputs aligned with three repayment cycles.
+  int get recentPrepaymentWindowMonths =>
+      recentPrepaymentPlanningCycles * prepaymentFrequencyMonths;
   final double fixedAugustPrepayment;
   final double fixedSeptemberPrepayment;
   final double fixedOctoberPrepayment;
@@ -61,6 +90,11 @@ class LoanPlanConfig {
     int integer(String key, int fallback) {
       final value = json[key];
       return value is num ? value.toInt() : '$value'.toIntOr(fallback);
+    }
+
+    int frequency(String key, int fallback) {
+      final value = integer(key, fallback);
+      return prepaymentFrequencyOptions.contains(value) ? value : fallback;
     }
 
     const defaults = LoanPlanConfig();
@@ -94,6 +128,14 @@ class LoanPlanConfig {
       monthlyLivingCost: number(
         'monthlyLivingCost',
         defaults.monthlyLivingCost,
+      ),
+      monthlyOtherExpense: number(
+        'monthlyOtherExpense',
+        defaults.monthlyOtherExpense,
+      ),
+      prepaymentFrequencyMonths: frequency(
+        'prepaymentFrequencyMonths',
+        defaults.prepaymentFrequencyMonths,
       ),
       fixedAugustPrepayment: number(
         'fixedAugustPrepayment',
@@ -143,6 +185,8 @@ class LoanPlanConfig {
     double? monthlySalary,
     double? monthlyExtraIncome,
     double? monthlyLivingCost,
+    double? monthlyOtherExpense,
+    int? prepaymentFrequencyMonths,
     double? fixedAugustPrepayment,
     double? fixedSeptemberPrepayment,
     double? fixedOctoberPrepayment,
@@ -167,6 +211,9 @@ class LoanPlanConfig {
       monthlySalary: monthlySalary ?? this.monthlySalary,
       monthlyExtraIncome: monthlyExtraIncome ?? this.monthlyExtraIncome,
       monthlyLivingCost: monthlyLivingCost ?? this.monthlyLivingCost,
+      monthlyOtherExpense: monthlyOtherExpense ?? this.monthlyOtherExpense,
+      prepaymentFrequencyMonths:
+          prepaymentFrequencyMonths ?? this.prepaymentFrequencyMonths,
       fixedAugustPrepayment:
           fixedAugustPrepayment ?? this.fixedAugustPrepayment,
       fixedSeptemberPrepayment:
@@ -200,6 +247,8 @@ class LoanPlanConfig {
       'monthlySalary': monthlySalary,
       'monthlyExtraIncome': monthlyExtraIncome,
       'monthlyLivingCost': monthlyLivingCost,
+      'monthlyOtherExpense': monthlyOtherExpense,
+      'prepaymentFrequencyMonths': prepaymentFrequencyMonths,
       'fixedAugustPrepayment': fixedAugustPrepayment,
       'fixedSeptemberPrepayment': fixedSeptemberPrepayment,
       'fixedOctoberPrepayment': fixedOctoberPrepayment,

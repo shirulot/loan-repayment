@@ -58,6 +58,29 @@ class LoanPlannerViewModel extends ChangeNotifier {
   /// 向界面暴露与还款计划一致的计算日期，避免预览使用另一套时钟。
   DateTime get calculationDate => _calculator.calculationDate;
 
+  /// 预约还款从还款日的下一天开始视为已结清；显式状态仍优先。
+  bool isRecentPrepaymentSettled(RecentPrepayment event) {
+    if (event.isSettled || event.actualPrepayment != null) return true;
+    if (event.amount <= 0) return false;
+
+    final repaymentDate = LoanPlanConfig.parseLoanStartDate(
+      event.repaymentDate,
+    );
+    if (repaymentDate == null) return false;
+
+    final today = DateTime(
+      calculationDate.year,
+      calculationDate.month,
+      calculationDate.day,
+    );
+    final scheduledDate = DateTime(
+      repaymentDate.year,
+      repaymentDate.month,
+      repaymentDate.day,
+    );
+    return today.isAfter(scheduledDate);
+  }
+
   int get calculatedRemainingTerms => _config.remainingTermsAt(calculationDate);
 
   String get expectedFinishMonth {
@@ -107,7 +130,8 @@ class LoanPlannerViewModel extends ChangeNotifier {
     return _config.monthlySalary -
         currentMonthlyPayment -
         _config.monthlyLivingCost +
-        _config.monthlyExtraIncome;
+        _config.monthlyExtraIncome -
+        _config.monthlyOtherExpense;
   }
 
   /// 当前余额仅扣除已实际录入或日期已到的提前还款，不预扣本月未来预约。
@@ -256,6 +280,12 @@ class LoanPlannerViewModel extends ChangeNotifier {
         value: _config.monthlyLivingCost,
         isHomeSummary: true,
       ),
+      if (_config.monthlyOtherExpense != 0)
+        CalculatorReference(
+          label: '其他消费',
+          value: _config.monthlyOtherExpense,
+          isHomeSummary: true,
+        ),
       CalculatorReference(
         label: '可供提前还贷额',
         value: currentAvailablePrepayment,

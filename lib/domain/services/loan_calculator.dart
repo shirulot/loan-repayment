@@ -22,6 +22,7 @@ class LoanCalculator {
     var providentOpening = config.providentOpeningBalance;
     final planStartDate = _planStartDate(config, actualPrepayments);
     var remainingTerms = config.remainingTermsAt(planStartDate);
+    var accumulatedAvailableFunds = 0.0;
     final rows = <LoanPlanRow>[];
 
     // The limit is only a safety net for invalid configurations that cannot make progress.
@@ -53,29 +54,63 @@ class LoanCalculator {
       final providentPayment = providentPrincipal + providentInterest;
       final totalPayment = commercialPayment + providentPayment;
       // Keep the cash-flow amount aligned with the editable fields shown on
-      // the first page: income - payment - living cost + extra income.
+      // the first page: income - payment - living cost - other expense + extra income.
       final availableFunds =
           config.monthlySalary -
           totalPayment -
           config.monthlyLivingCost +
-          config.monthlyExtraIncome;
+          config.monthlyExtraIncome -
+          config.monthlyOtherExpense;
 
       final scheduledPrepayments = _scheduledPrepaymentsForMonth(
         config: config,
         month: month,
       );
-      final requestedPrepayment = scheduledPrepayments.isNotEmpty
-          ? scheduledPrepayments.fold<double>(
-              0,
-              (total, item) => total + item.amount,
-            )
-          : config.recentPrepayments.isNotEmpty
-          ? math.max(0.0, availableFunds)
-          : _requestedPrepayment(
-              index: index,
-              availableFunds: availableFunds,
-              config: config,
-            );
+      final legacyActualPrepayment = actualPrepayments[month];
+      final hasRecentPrepayments = _hasRecentPrepayments(config);
+      final isPlanningMonth = _isPlanningMonth(
+        month,
+        config.prepaymentFrequencyMonths,
+      );
+      final hasExplicitPrepayment =
+          scheduledPrepayments.isNotEmpty || legacyActualPrepayment != null;
+      double requestedPrepayment;
+      if (scheduledPrepayments.isNotEmpty) {
+        // A dated recent repayment is an explicit event and therefore wins
+        // over the planning interval, including when it falls between two
+        // planned frequency months.
+        requestedPrepayment = scheduledPrepayments.fold<double>(
+          0,
+          (total, item) => total + item.amount,
+        );
+        accumulatedAvailableFunds = 0;
+      } else if (legacyActualPrepayment != null) {
+        // Legacy month-keyed actual records remain authoritative during the
+        // transition to event-based recent repayment data.
+        final expectedAmount = hasRecentPrepayments
+            ? 0.0
+            : _expectedPrepaymentForIndex(index, config);
+        requestedPrepayment = expectedAmount > 0
+            ? expectedAmount
+            : math.max(0.0, availableFunds);
+        accumulatedAvailableFunds = 0;
+      } else {
+        final isCurrentOrFutureMonth = !_isBeforeCalculationMonth(month);
+        if (isCurrentOrFutureMonth) {
+          accumulatedAvailableFunds += math.max(0.0, availableFunds);
+        }
+        requestedPrepayment = _requestedPrepayment(
+          index: index,
+          accumulatedAvailableFunds: accumulatedAvailableFunds,
+          config: config,
+          hasRecentPrepayments: hasRecentPrepayments,
+          isPlanningMonth: isPlanningMonth,
+          isCurrentOrFutureMonth: isCurrentOrFutureMonth,
+        );
+        if (isPlanningMonth && isCurrentOrFutureMonth) {
+          accumulatedAvailableFunds = 0;
+        }
+      }
       final remainingAfterNormalPayment =
           math.max(0.0, commercialOpening - commercialPrincipal).toDouble() +
           math.max(0.0, providentOpening - providentPrincipal).toDouble();
@@ -90,7 +125,6 @@ class LoanCalculator {
                   .min(requestedPrepayment, remainingAfterNormalPayment)
                   .toDouble(),
             );
-      final legacyActualPrepayment = actualPrepayments[month];
       // Each dated event owns its actual amount. The old month-keyed value is
       // only retained for imported backups that predate event-based records.
       final eventActualPrepayment = scheduledPrepayments
@@ -144,8 +178,12 @@ class LoanCalculator {
         paymentMonthStart: month,
         config: config,
       );
+      final hasPlannedPrepayment =
+          hasExplicitPrepayment || expectedPrepayment > 0;
       final plannedPrepaymentDate = scheduledPrepayments.isEmpty
-          ? _plannedPrepaymentDate(index, config)
+          ? hasPlannedPrepayment
+                ? _plannedPrepaymentDate(index, config)
+                : null
           : scheduledPrepayments.first.repaymentDate;
       final effectivePrepaymentDate = appliedPrepayments.dates.isEmpty
           ? null
@@ -353,29 +391,58 @@ class LoanCalculator {
 
   double _requestedPrepayment({
     required int index,
-    required double availableFunds,
+    required double accumulatedAvailableFunds,
     required LoanPlanConfig config,
+    required bool hasRecentPrepayments,
+    required bool isPlanningMonth,
+    required bool isCurrentOrFutureMonth,
   }) {
-    if (index == 0) {
-      return _recentExpectedOrAvailable(
-        config.fixedAugustPrepayment,
-        availableFunds,
-      );
+    if (!isCurrentOrFutureMonth || !isPlanningMonth) return 0;
+
+    // When no recent repayment event is available, retain the three legacy
+    // expected amounts as the first planning inputs. Once recent events exist,
+    // the remaining plan is based on accumulated available cash instead.
+    if (!hasRecentPrepayments) {
+      final expectedAmount = _expectedPrepaymentForIndex(index, config);
+      if (expectedAmount > 0) return expectedAmount;
     }
-    if (index == 1) {
-      return _recentExpectedOrAvailable(
-        config.fixedSeptemberPrepayment,
-        availableFunds,
-      );
-    }
-    if (index == 2) {
-      return _recentExpectedOrAvailable(
-        config.fixedOctoberPrepayment,
-        availableFunds,
-      );
-    }
-    // The available amount rises naturally as normal monthly payments decline.
-    return math.max(0, availableFunds);
+    return math.max(0, accumulatedAvailableFunds);
+  }
+
+  double _expectedPrepaymentForIndex(int index, LoanPlanConfig config) {
+    return switch (index) {
+      0 => config.fixedAugustPrepayment,
+      1 => config.fixedSeptemberPrepayment,
+      2 => config.fixedOctoberPrepayment,
+      _ => 0.0,
+    };
+  }
+
+  bool _hasRecentPrepayments(LoanPlanConfig config) {
+    return config.recentPrepayments.any(
+      (event) =>
+          event.amount > 0 ||
+          event.actualPrepayment != null ||
+          event.repaymentDate.trim().isNotEmpty,
+    );
+  }
+
+  bool _isBeforeCalculationMonth(String month) {
+    final date = LoanPlanConfig.parseLoanStartDate('$month-01');
+    if (date == null) return false;
+    final current = DateTime(calculationDate.year, calculationDate.month);
+    return date.isBefore(current);
+  }
+
+  bool _isPlanningMonth(String month, int frequencyMonths) {
+    final date = LoanPlanConfig.parseLoanStartDate('$month-01');
+    if (date == null) return false;
+    final current = DateTime(calculationDate.year, calculationDate.month);
+    if (date.isBefore(current)) return false;
+    final elapsedMonths =
+        (date.year - current.year) * 12 + date.month - current.month;
+    final normalizedFrequency = frequencyMonths < 1 ? 1 : frequencyMonths;
+    return elapsedMonths % normalizedFrequency == 0;
   }
 
   String? _plannedPrepaymentDate(int index, LoanPlanConfig config) {
@@ -613,14 +680,6 @@ class LoanCalculator {
         commercialInterest +
         providentPrincipal +
         providentInterest;
-  }
-
-  /// A recent expected amount takes priority; empty and zero values use cash flow.
-  double _recentExpectedOrAvailable(
-    double expectedAmount,
-    double availableFunds,
-  ) {
-    return expectedAmount > 0 ? expectedAmount : math.max(0, availableFunds);
   }
 
   double _roundUpToTen(double value) {

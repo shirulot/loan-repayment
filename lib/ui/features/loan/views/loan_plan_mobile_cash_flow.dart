@@ -74,6 +74,13 @@ class LoanMobileCashFlowSummary extends StatelessWidget {
                       icon: Icons.coffee_outlined,
                       amountsMasked: viewModel.amountsMasked,
                     ),
+                    if (config.monthlyOtherExpense != 0)
+                      _LoanMobileCashMetric(
+                        label: '其他消费',
+                        value: config.monthlyOtherExpense,
+                        icon: Icons.shopping_bag_outlined,
+                        amountsMasked: viewModel.amountsMasked,
+                      ),
                   ],
                 ),
               ),
@@ -192,6 +199,8 @@ class LoanMobileCashFlowSheet extends StatelessWidget {
     required this.monthlyExtraIncomeFocusNode,
     required this.monthlyLivingCostController,
     required this.monthlyLivingCostFocusNode,
+    required this.monthlyOtherExpenseController,
+    required this.monthlyOtherExpenseFocusNode,
     required this.onSave,
   });
 
@@ -202,6 +211,8 @@ class LoanMobileCashFlowSheet extends StatelessWidget {
   final FocusNode monthlyExtraIncomeFocusNode;
   final TextEditingController monthlyLivingCostController;
   final FocusNode monthlyLivingCostFocusNode;
+  final TextEditingController monthlyOtherExpenseController;
+  final FocusNode monthlyOtherExpenseFocusNode;
   final VoidCallback onSave;
 
   String _money(double value) =>
@@ -252,6 +263,13 @@ class LoanMobileCashFlowSheet extends StatelessWidget {
               label: '每月生活费',
               controller: monthlyLivingCostController,
               focusNode: monthlyLivingCostFocusNode,
+              suffix: '元',
+              amountsMasked: viewModel.amountsMasked,
+            ),
+            LoanMobileInputField(
+              label: '其他消费',
+              controller: monthlyOtherExpenseController,
+              focusNode: monthlyOtherExpenseFocusNode,
               suffix: '元',
               amountsMasked: viewModel.amountsMasked,
             ),

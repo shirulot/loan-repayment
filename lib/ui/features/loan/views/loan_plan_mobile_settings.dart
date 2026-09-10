@@ -12,6 +12,7 @@ class LoanMobileSettingsGroup extends StatelessWidget {
     required this.config,
     required this.viewModel,
     required this.recentPrepayments,
+    required this.correctingRecentPrepaymentIds,
     required this.expandedSections,
     required this.controllerFor,
     required this.focusNodeFor,
@@ -19,12 +20,15 @@ class LoanMobileSettingsGroup extends StatelessWidget {
     required this.onRecentPrepaymentChanged,
     required this.onAddRecentPrepayment,
     required this.onRemoveRecentPrepayment,
+    required this.onCorrectRecentPrepayment,
+    required this.onConfirmRecentPrepayment,
     required this.onSectionExpansionChanged,
   });
 
   final LoanPlanConfig config;
   final LoanPlannerViewModel viewModel;
   final List<RecentPrepayment> recentPrepayments;
+  final Set<String> correctingRecentPrepaymentIds;
   final Set<String> expandedSections;
   final TextEditingController Function(String key) controllerFor;
   final FocusNode Function(String key) focusNodeFor;
@@ -32,6 +36,8 @@ class LoanMobileSettingsGroup extends StatelessWidget {
   final VoidCallback onRecentPrepaymentChanged;
   final VoidCallback onAddRecentPrepayment;
   final ValueChanged<int> onRemoveRecentPrepayment;
+  final ValueChanged<String> onCorrectRecentPrepayment;
+  final ValueChanged<String> onConfirmRecentPrepayment;
   final void Function(String title, bool expanded) onSectionExpansionChanged;
 
   String _money(double value) =>
@@ -110,7 +116,9 @@ class LoanMobileSettingsGroup extends StatelessWidget {
 
   Widget _recentPrepaymentFields(int index) {
     final event = recentPrepayments[index];
-    final isSettled = event.isSettled || event.actualPrepayment != null;
+    final isSettled = viewModel.isRecentPrepaymentSettled(event);
+    final isCorrecting = correctingRecentPrepaymentIds.contains(event.id);
+    final fieldsEnabled = !isSettled || isCorrecting;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -118,22 +126,41 @@ class LoanMobileSettingsGroup extends StatelessWidget {
           '第 ${index + 1} 笔金额',
           'recentPrepayment-${event.id}-amount',
           suffix: '元',
-          enabled: !isSettled,
+          enabled: fieldsEnabled,
         ),
         _inputField(
           '第 ${index + 1} 笔还款日期',
           'recentPrepayment-${event.id}-date',
           suffix: isSettled ? '已结清' : '预定日期',
           date: true,
-          enabled: !isSettled,
+          enabled: fieldsEnabled,
         ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton.icon(
-            onPressed: isSettled ? null : () => onRemoveRecentPrepayment(index),
-            icon: const Icon(Icons.delete_outline, size: 17),
-            label: const Text('删除此笔'),
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            if (isSettled)
+              TextButton.icon(
+                // Correction mode unlocks only this settled event; confirming
+                // the edit switches the same event back to its locked state.
+                onPressed: isCorrecting
+                    ? () => onConfirmRecentPrepayment(event.id)
+                    : () => onCorrectRecentPrepayment(event.id),
+                icon: Icon(
+                  isCorrecting ? Icons.check_outlined : Icons.edit_outlined,
+                  size: 17,
+                ),
+                label: Text(isCorrecting ? '确认' : '修正'),
+              )
+            else
+              const SizedBox.shrink(),
+            TextButton.icon(
+              // Settled records remain removable so the recent-repayment
+              // window can be corrected after a repayment date has passed.
+              onPressed: () => onRemoveRecentPrepayment(index),
+              icon: const Icon(Icons.delete_outline, size: 17),
+              label: const Text('删除此笔'),
+            ),
+          ],
         ),
       ],
     );
@@ -142,6 +169,8 @@ class LoanMobileSettingsGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final recentPrepaymentTitle =
+        '最近${config.recentPrepaymentWindowMonths}个月提前还款';
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -204,12 +233,12 @@ class LoanMobileSettingsGroup extends StatelessWidget {
           ),
           Divider(color: colors.outlineVariant.withValues(alpha: 0.48)),
           LoanMobileCompactSection(
-            title: '最近三笔提前还款',
+            title: recentPrepaymentTitle,
             icon: Icons.track_changes_outlined,
             summary: _expectedPrepaymentSummary(),
-            expanded: expandedSections.contains('最近三笔提前还款'),
+            expanded: expandedSections.contains('recentPrepayments'),
             onExpansionChanged: (expanded) =>
-                onSectionExpansionChanged('最近三笔提前还款', expanded),
+                onSectionExpansionChanged('recentPrepayments', expanded),
             children: [
               ...List<Widget>.generate(
                 recentPrepayments.length,
@@ -219,7 +248,9 @@ class LoanMobileSettingsGroup extends StatelessWidget {
               OutlinedButton.icon(
                 onPressed: onAddRecentPrepayment,
                 icon: const Icon(Icons.add_outlined, size: 18),
-                label: const Text('添加一笔（保留最近三笔）'),
+                label: Text(
+                  '添加一笔（保留最近${config.recentPrepaymentWindowMonths}个月）',
+                ),
               ),
             ],
           ),

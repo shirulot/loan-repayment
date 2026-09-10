@@ -1,23 +1,36 @@
 import 'package:flutter/material.dart';
 
-import '../../../../domain/models/loan_models.dart';
 import '../view_models/loan_planner_view_model.dart';
 import 'loan_plan_formatters.dart';
 import 'loan_plan_gesture_detector.dart';
 
-/// Shows the selectable three-month repayment preview.
+/// One aggregated repayment period displayed in the home preview.
+class LoanMobilePreviewPeriod {
+  const LoanMobilePreviewPeriod({
+    required this.endMonth,
+    required this.expectedPrepayment,
+    required this.totalBalance,
+  });
+
+  /// The final month of this repayment period, used as its visible label.
+  final String endMonth;
+  final double expectedPrepayment;
+  final double totalBalance;
+}
+
+/// Shows the next three selectable repayment periods.
 class LoanMobilePreviewSection extends StatelessWidget {
   const LoanMobilePreviewSection({
     super.key,
     required this.viewModel,
-    required this.rows,
+    required this.periods,
     required this.highlightedMonth,
     required this.onViewDetails,
     required this.onRowTap,
   });
 
   final LoanPlannerViewModel viewModel;
-  final List<LoanPlanRow> rows;
+  final List<LoanMobilePreviewPeriod> periods;
   final String? highlightedMonth;
   final VoidCallback onViewDetails;
   final ValueChanged<String> onRowTap;
@@ -39,7 +52,7 @@ class LoanMobilePreviewSection extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                '未来三个月还款预览',
+                '未来3期还款预览',
                 style: Theme.of(
                   context,
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w400),
@@ -72,13 +85,13 @@ class LoanMobilePreviewSection extends StatelessWidget {
                 balance: '剩余\n本金',
                 header: true,
               ),
-              ...rows.map(
-                (row) => LoanMobilePreviewRow(
-                  month: _displayPreviewMonth(row.month),
-                  expected: '¥${_money(row.expectedPrepayment)}',
-                  balance: '¥${_money(row.totalBalance)}',
-                  selected: row.month == highlightedMonth,
-                  onTap: () => onRowTap(row.month),
+              ...periods.map(
+                (period) => LoanMobilePreviewRow(
+                  month: _displayPreviewMonth(period.endMonth),
+                  expected: '¥${_money(period.expectedPrepayment)}',
+                  balance: '¥${_money(period.totalBalance)}',
+                  selected: period.endMonth == highlightedMonth,
+                  onTap: () => onRowTap(period.endMonth),
                 ),
               ),
               Padding(

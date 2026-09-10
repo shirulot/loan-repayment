@@ -76,6 +76,7 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
       'monthlySalary': editableNumber(config.monthlySalary),
       'monthlyExtraIncome': editableNumber(config.monthlyExtraIncome),
       'monthlyLivingCost': editableNumber(config.monthlyLivingCost),
+      'monthlyOtherExpense': editableNumber(config.monthlyOtherExpense),
       'fixedAugustPrepayment': editableNumber(config.fixedAugustPrepayment),
       'fixedSeptemberPrepayment': editableNumber(
         config.fixedSeptemberPrepayment,
@@ -131,6 +132,7 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
           old.monthlyExtraIncome,
         ),
         monthlyLivingCost: number('monthlyLivingCost', old.monthlyLivingCost),
+        monthlyOtherExpense: zeroIfBlank('monthlyOtherExpense'),
         // Blank recent expected amounts intentionally fall back to cash flow.
         fixedAugustPrepayment: zeroIfBlank('fixedAugustPrepayment'),
         fixedSeptemberPrepayment: zeroIfBlank('fixedSeptemberPrepayment'),
@@ -190,7 +192,7 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
             ),
             const SizedBox(height: 5),
             Text(
-              '填写贷款开始日期和总年限后，剩余期数会按当前月份自动计算；蓝色字段可编辑。近三个月优先使用期望还款额，留空或填 0 时按可供提前还贷额计算；第四个月起也按可供提前还贷额计算，月供下降时金额会自动递增。',
+              '填写贷款开始日期和总年限后，剩余期数会按当前月份自动计算；蓝色字段可编辑。近三个月优先使用期望还款额，留空或填 0 时按可供提前还贷额计算；未被最近还款覆盖的月份按首页选择的频率规划，间隔月份的可用金额累计到下一次。',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 13),
@@ -218,6 +220,7 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
               suffix: '元',
             ),
             _field('每月生活费（仅记录）', 'monthlyLivingCost', suffix: '元'),
+            _field('其他消费', 'monthlyOtherExpense', suffix: '元'),
             _calculatedField(
               '可供提前还贷额',
               widget.viewModel.currentAvailablePrepayment,
