@@ -127,6 +127,41 @@ void main() {
     );
   });
 
+  test('switches the full schedule between the two repayment formulas', () {
+    const equalPrincipalConfig = LoanPlanConfig(
+      providentOpeningBalance: 120000,
+      providentAnnualRate: 0.12,
+      remainingTerms: 12,
+      isPlanRepaymentMode: true,
+    );
+    final equalPrincipalRows = calculator.calculate(
+      equalPrincipalConfig,
+      const <String, double?>{},
+    );
+    final annuityRows = calculator.calculate(
+      equalPrincipalConfig.copyWith(
+        repaymentMethod: LoanRepaymentMethod.equalPrincipalAndInterest,
+      ),
+      const <String, double?>{},
+    );
+
+    expect(equalPrincipalRows[1].providentPrincipal, closeTo(10000, 0.001));
+    expect(equalPrincipalRows[1].providentPayment, closeTo(11200, 0.001));
+    expect(
+      equalPrincipalRows[2].providentPayment,
+      lessThan(equalPrincipalRows[1].providentPayment),
+    );
+    expect(annuityRows[1].providentPayment, closeTo(10661.8548, 0.001));
+    expect(
+      annuityRows[2].providentPayment,
+      closeTo(annuityRows[1].providentPayment, 0.001),
+    );
+    expect(
+      annuityRows[1].providentPrincipal,
+      closeTo(annuityRows[1].providentPayment - 1200, 0.001),
+    );
+  });
+
   test('calculates the transfer difference from the two monthly totals', () {
     final rows = calculator.calculate(config, {'2026-08': 17500});
 
@@ -260,6 +295,29 @@ void main() {
     expect(freshConfig.monthlyOtherExpense, 0);
     expect(freshConfig.fixedAugustPrepayment, 0);
     expect(freshConfig.prepaymentFrequencyMonths, 1);
+    expect(freshConfig.repaymentMethod, LoanRepaymentMethod.equalPrincipal);
+  });
+
+  test('restores and exports the global repayment method', () {
+    final restored = LoanPlanConfig.fromJson({
+      'repaymentMethod': 'equalPrincipalAndInterest',
+    });
+
+    expect(
+      restored.repaymentMethod,
+      LoanRepaymentMethod.equalPrincipalAndInterest,
+    );
+    expect(restored.toJson()['repaymentMethod'], 'equalPrincipalAndInterest');
+    expect(
+      LoanPlanConfig.fromJson(const {}).repaymentMethod,
+      LoanRepaymentMethod.equalPrincipal,
+    );
+    expect(
+      LoanPlanConfig.fromJson({
+        'repaymentMethod': 'unsupported',
+      }).repaymentMethod,
+      LoanRepaymentMethod.equalPrincipal,
+    );
   });
 
   test('restores and exports the prepayment frequency', () {
@@ -365,6 +423,21 @@ void main() {
           .remainingTerms,
       161,
     );
+  });
+
+  test('derives total years from an edited remaining term count', () {
+    final durationConfig = config.copyWith(
+      loanStartDate: '2020-01-15',
+      loanTermYears: 20,
+    );
+    final updated = durationConfig.withRemainingTermsAt(
+      DateTime(2026, 8, 19),
+      162,
+    );
+
+    expect(updated.remainingTermsAt(DateTime(2026, 8, 19)), 162);
+    expect(updated.remainingTerms, 162);
+    expect(updated.loanTermYears, closeTo(241 / 12, 0.000001));
   });
 
   test(

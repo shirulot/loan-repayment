@@ -227,6 +227,89 @@ void main() {
     );
   });
 
+  testWidgets('selecting a repayment method recalculates the full plan', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final viewModel = createViewModel();
+    addTearDown(viewModel.dispose);
+    final equalPrincipalPayment = viewModel.rows[1].totalPayment;
+
+    await tester.pumpWidget(
+      MaterialApp(home: LoanPlanPage(viewModel: viewModel)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      viewModel.config.repaymentMethod,
+      LoanRepaymentMethod.equalPrincipal,
+    );
+    await tester.tap(find.text('等额本息'));
+    await tester.pumpAndSettle();
+
+    expect(
+      viewModel.config.repaymentMethod,
+      LoanRepaymentMethod.equalPrincipalAndInterest,
+    );
+    expect(
+      viewModel.rows[1].totalPayment,
+      isNot(closeTo(equalPrincipalPayment, 0.001)),
+    );
+  });
+
+  testWidgets('editing remaining terms derives the total loan years', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final viewModel = LoanPlannerViewModel(
+      calculator: LoanCalculator(currentDate: DateTime(2026, 8, 19)),
+      initialConfig: const LoanPlanConfig(
+        loanStartDate: '2020-01-15',
+        loanTermYears: 20,
+        providentOpeningBalance: 120000,
+        providentAnnualRate: 0.026,
+      ),
+    );
+    addTearDown(viewModel.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MobileLoanPlanLayout(
+            viewModel: viewModel,
+            config: viewModel.config,
+            onViewDetails: () {},
+            onViewMonth: (_) {},
+            onShowInfo: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('贷款期限'));
+    await tester.pumpAndSettle();
+    final remainingTermsField = find.byWidgetPredicate(
+      (widget) => widget is TextField && widget.decoration?.labelText == '剩余期数',
+    );
+    await tester.enterText(remainingTermsField, '162');
+    for (var index = 0; index < 4; index++) {
+      await tester.fling(find.byType(ListView), const Offset(0, -1200), 1200);
+      await tester.pumpAndSettle();
+    }
+    final applyButton = find.text('应用并重算');
+    await tester.ensureVisible(applyButton);
+    await tester.tap(applyButton);
+    await tester.pumpAndSettle();
+
+    expect(viewModel.calculatedRemainingTerms, 162);
+    expect(viewModel.config.loanTermYears, closeTo(241 / 12, 0.000001));
+  });
+
   testWidgets('selecting planned repayment mode updates the home plan', (
     tester,
   ) async {

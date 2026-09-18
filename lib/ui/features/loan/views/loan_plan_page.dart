@@ -11,6 +11,7 @@ import 'loan_plan_mobile_navigation.dart';
 import 'loan_plan_parameter_card.dart';
 import 'loan_plan_summary_strip.dart';
 import 'loan_month_detail_page.dart';
+import 'loan_repayment_method_selector.dart';
 
 class LoanPlanPage extends StatefulWidget {
   const LoanPlanPage({super.key, required this.viewModel});
@@ -174,6 +175,17 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
                                 viewModel.config.isPlanRepaymentMode,
                             onChanged: _updatePrepaymentFrequency,
                             onSelectPlanRepayment: _selectPlanRepaymentMode,
+                          ),
+                          const SizedBox(height: 12),
+                          LoanRepaymentMethodSelector(
+                            method: viewModel.config.repaymentMethod,
+                            onChanged: (method) {
+                              viewModel.updateConfig(
+                                viewModel.config.copyWith(
+                                  repaymentMethod: method,
+                                ),
+                              );
+                            },
                           ),
                           const SizedBox(height: 12),
                           LoanPlanIntroBanner(viewModel: viewModel),

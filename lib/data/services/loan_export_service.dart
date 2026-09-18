@@ -20,7 +20,7 @@ class LoanExportService {
     LoanPlanConfig config,
     List<LoanPlanRow> rows,
   ) async {
-    final content = _csvContent(rows);
+    final content = _csvContent(config, rows);
     return _save('loan-repayment-plan.csv', content, 'CSV');
   }
 
@@ -67,8 +67,10 @@ class LoanExportService {
     return ExportedLoanFile(path: file.path, kind: kind);
   }
 
-  String _csvContent(List<LoanPlanRow> rows) {
+  String _csvContent(LoanPlanConfig config, List<LoanPlanRow> rows) {
     final lines = <List<Object?>>[
+      <Object?>['还款方式', config.repaymentMethod.label],
+      const <Object?>[],
       <Object?>[
         '月份',
         '商贷月供',
@@ -166,6 +168,7 @@ th{background:#1f4e78;color:#fff;padding:7px;border:1px solid #d9e2f3}
 td{padding:6px;border:1px solid #d9e2f3;text-align:right} td:first-child{text-align:center}
 </style></head><body>
 <h1>提前还贷计算器计划表</h1>
+<p>还款方式：${_escapeHtml(config.repaymentMethod.label)}</p>
 <p>商贷利率：${(config.commercialAnnualRate * 100).toStringAsFixed(2)}%；公积金利率：${(config.providentAnnualRate * 100).toStringAsFixed(2)}%</p>
 <table><thead><tr>${header.map((item) => '<th>${_escapeHtml(item)}</th>').join()}</tr></thead><tbody>$body</tbody></table>
 </body></html>''';

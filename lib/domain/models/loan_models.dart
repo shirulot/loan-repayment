@@ -1,5 +1,22 @@
 import '../../core/extensions/string_extensions.dart';
 
+/// 全局正常月供计算方式，商贷与公积金保持一致。
+enum LoanRepaymentMethod {
+  equalPrincipal('等额本金'),
+  equalPrincipalAndInterest('等额本息');
+
+  const LoanRepaymentMethod(this.label);
+
+  final String label;
+
+  static LoanRepaymentMethod fromJson(Object? value) {
+    return LoanRepaymentMethod.values.firstWhere(
+      (method) => method.name == value,
+      orElse: () => LoanRepaymentMethod.equalPrincipal,
+    );
+  }
+}
+
 class LoanPlanConfig {
   static const defaultPrepaymentFrequencyMonths = 1;
   static const recentPrepaymentPlanningCycles = 3;
@@ -29,6 +46,7 @@ class LoanPlanConfig {
     this.remainingTerms = 200,
     this.loanStartDate = '',
     this.loanTermYears = 0,
+    this.repaymentMethod = LoanRepaymentMethod.equalPrincipal,
     this.monthlySalary = 0,
     this.monthlyExtraIncome = 0,
     this.monthlyLivingCost = 0,
@@ -57,7 +75,10 @@ class LoanPlanConfig {
   final String loanStartDate;
 
   /// Total loan duration in years; zero keeps legacy terms.
-  final int loanTermYears;
+  final double loanTermYears;
+
+  /// Repayment formula shared by commercial and provident-fund loans.
+  final LoanRepaymentMethod repaymentMethod;
   final double monthlySalary;
   final double monthlyExtraIncome;
   final double monthlyLivingCost;
@@ -122,7 +143,8 @@ class LoanPlanConfig {
       remainingTerms: integer('remainingTerms', defaults.remainingTerms),
       loanStartDate:
           json['loanStartDate']?.toString() ?? defaults.loanStartDate,
-      loanTermYears: integer('loanTermYears', defaults.loanTermYears),
+      loanTermYears: number('loanTermYears', defaults.loanTermYears),
+      repaymentMethod: LoanRepaymentMethod.fromJson(json['repaymentMethod']),
       monthlySalary: number('monthlySalary', defaults.monthlySalary),
       monthlyExtraIncome: number(
         'monthlyExtraIncome',
@@ -185,7 +207,8 @@ class LoanPlanConfig {
     double? providentAnnualRate,
     int? remainingTerms,
     String? loanStartDate,
-    int? loanTermYears,
+    double? loanTermYears,
+    LoanRepaymentMethod? repaymentMethod,
     double? monthlySalary,
     double? monthlyExtraIncome,
     double? monthlyLivingCost,
@@ -213,6 +236,7 @@ class LoanPlanConfig {
       remainingTerms: remainingTerms ?? this.remainingTerms,
       loanStartDate: loanStartDate ?? this.loanStartDate,
       loanTermYears: loanTermYears ?? this.loanTermYears,
+      repaymentMethod: repaymentMethod ?? this.repaymentMethod,
       monthlySalary: monthlySalary ?? this.monthlySalary,
       monthlyExtraIncome: monthlyExtraIncome ?? this.monthlyExtraIncome,
       monthlyLivingCost: monthlyLivingCost ?? this.monthlyLivingCost,
@@ -250,6 +274,7 @@ class LoanPlanConfig {
       'remainingTerms': remainingTerms,
       'loanStartDate': loanStartDate,
       'loanTermYears': loanTermYears,
+      'repaymentMethod': repaymentMethod.name,
       'monthlySalary': monthlySalary,
       'monthlyExtraIncome': monthlyExtraIncome,
       'monthlyLivingCost': monthlyLivingCost,
@@ -377,9 +402,33 @@ class LoanPlanConfig {
         currentDate.month -
         startDate.month;
     final completedMonths = elapsedMonths < 0 ? 0 : elapsedMonths;
-    final totalMonths = loanTermYears * 12;
+    final totalMonths = (loanTermYears * 12).round();
     final remaining = totalMonths - completedMonths;
     return remaining < 0 ? 0 : remaining;
+  }
+
+  /// Uses an exact remaining-month input to derive the matching total years.
+  LoanPlanConfig withRemainingTermsAt(
+    DateTime currentDate,
+    int updatedRemainingTerms,
+  ) {
+    final normalizedTerms = updatedRemainingTerms < 0
+        ? 0
+        : updatedRemainingTerms;
+    final startDate = parseLoanStartDate(loanStartDate);
+    if (startDate == null) {
+      return copyWith(remainingTerms: normalizedTerms);
+    }
+
+    final elapsedMonths =
+        (currentDate.year - startDate.year) * 12 +
+        currentDate.month -
+        startDate.month;
+    final completedMonths = elapsedMonths < 0 ? 0 : elapsedMonths;
+    return copyWith(
+      remainingTerms: normalizedTerms,
+      loanTermYears: (completedMonths + normalizedTerms) / 12,
+    );
   }
 }
 

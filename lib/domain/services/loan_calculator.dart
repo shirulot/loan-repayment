@@ -32,24 +32,19 @@ class LoanCalculator {
       final isCalibrationMonth = index == 0;
       final openingBalance = commercialOpening + providentOpening;
 
-      final commercialPrincipal = _commercialPrincipal(
-        index: index,
-        opening: commercialOpening,
-        remainingTerms: remainingTerms,
-        config: config,
-      );
-      final commercialInterest = _commercialInterest(
-        index: index,
-        month: month,
-        opening: commercialOpening,
-        config: config,
-      );
-      final providentPrincipal = isCalibrationMonth
-          ? 0.0
-          : _normalPrincipal(providentOpening, remainingTerms);
-      final providentInterest = isCalibrationMonth
-          ? 0.0
-          : providentOpening * config.providentAnnualRate / 12;
+      final normalPayment = isCalibrationMonth
+          ? const _NormalPayment.zero()
+          : _normalPayment(
+              commercialOpening: commercialOpening,
+              providentOpening: providentOpening,
+              remainingTerms: remainingTerms,
+              paymentMonth: month,
+              config: config,
+            );
+      final commercialPrincipal = normalPayment.commercialPrincipal;
+      final commercialInterest = normalPayment.commercialInterest;
+      final providentPrincipal = normalPayment.providentPrincipal;
+      final providentInterest = normalPayment.providentInterest;
       final commercialPayment = commercialPrincipal + commercialInterest;
       final providentPayment = providentPrincipal + providentInterest;
       final totalPayment = commercialPayment + providentPayment;
@@ -318,36 +313,16 @@ class LoanCalculator {
     return startDate;
   }
 
-  double _commercialPrincipal({
-    required int index,
-    required double opening,
-    required int remainingTerms,
-    required LoanPlanConfig config,
-  }) {
-    if (index == 0 || opening <= 0 || remainingTerms <= 0) return 0;
-    return _normalPrincipal(opening, remainingTerms);
-  }
-
-  double _commercialInterest({
-    required int index,
-    required String month,
-    required double opening,
-    required LoanPlanConfig config,
-  }) {
-    if (index == 0 || opening <= 0) return 0;
-    return _commercialInterestForPaymentMonth(
-      month: month,
-      opening: opening,
-      config: config,
-    );
-  }
-
   double _commercialInterestForPaymentMonth({
     required String month,
     required double opening,
     required LoanPlanConfig config,
   }) {
     if (opening <= 0) return 0;
+    if (config.repaymentMethod ==
+        LoanRepaymentMethod.equalPrincipalAndInterest) {
+      return opening * config.commercialAnnualRate / 12;
+    }
     final date = LoanPlanConfig.parseLoanStartDate('$month-01');
     if (date == null) return opening * config.commercialAnnualRate / 12;
     // 月供发生在当月 1 日，计息周期对应上一个完整自然月。
@@ -360,9 +335,27 @@ class LoanCalculator {
         daysInInterestMonth;
   }
 
-  double _normalPrincipal(double opening, int remainingTerms) {
+  double _normalPrincipal({
+    required double opening,
+    required double annualRate,
+    required double interest,
+    required int remainingTerms,
+    required LoanRepaymentMethod repaymentMethod,
+  }) {
     if (opening <= 0 || remainingTerms <= 0) return 0;
-    return math.min(opening, opening / remainingTerms);
+    if (repaymentMethod == LoanRepaymentMethod.equalPrincipal) {
+      return math.min(opening, opening / remainingTerms);
+    }
+
+    final monthlyRate = annualRate / 12;
+    if (monthlyRate <= 0) {
+      return math.min(opening, opening / remainingTerms);
+    }
+    // 等额本息先求固定月供，再扣除当期利息得到实际归还本金。
+    final compoundFactor = math.pow(1 + monthlyRate, remainingTerms).toDouble();
+    final monthlyPayment =
+        opening * monthlyRate * compoundFactor / (compoundFactor - 1);
+    return (monthlyPayment - interest).clamp(0.0, opening).toDouble();
   }
 
   /// Calculates an optional normal-payment step between same-month
@@ -376,21 +369,27 @@ class LoanCalculator {
     required String paymentMonth,
     required LoanPlanConfig config,
   }) {
-    final commercialPrincipal = _normalPrincipal(
-      commercialOpening,
-      remainingTerms,
-    );
     final commercialInterest = _commercialInterestForPaymentMonth(
       month: paymentMonth,
       opening: commercialOpening,
       config: config,
     );
-    final providentPrincipal = _normalPrincipal(
-      providentOpening,
-      remainingTerms,
+    final commercialPrincipal = _normalPrincipal(
+      opening: commercialOpening,
+      annualRate: config.commercialAnnualRate,
+      interest: commercialInterest,
+      remainingTerms: remainingTerms,
+      repaymentMethod: config.repaymentMethod,
     );
     final providentInterest =
         providentOpening * config.providentAnnualRate / 12;
+    final providentPrincipal = _normalPrincipal(
+      opening: providentOpening,
+      annualRate: config.providentAnnualRate,
+      interest: providentInterest,
+      remainingTerms: remainingTerms,
+      repaymentMethod: config.repaymentMethod,
+    );
     return _NormalPayment(
       commercialPrincipal: commercialPrincipal,
       commercialInterest: commercialInterest,
@@ -694,18 +693,24 @@ class LoanCalculator {
     required LoanPlanConfig config,
   }) {
     // 不使用银行账单、结转息和当月提前还款后的余额。
-    final commercialPrincipal = _normalPrincipal(
-      commercialOpening,
-      remainingTerms,
-    );
     final commercialInterest =
         commercialOpening * config.commercialAnnualRate / 12;
-    final providentPrincipal = _normalPrincipal(
-      providentOpening,
-      remainingTerms,
+    final commercialPrincipal = _normalPrincipal(
+      opening: commercialOpening,
+      annualRate: config.commercialAnnualRate,
+      interest: commercialInterest,
+      remainingTerms: remainingTerms,
+      repaymentMethod: config.repaymentMethod,
     );
     final providentInterest =
         providentOpening * config.providentAnnualRate / 12;
+    final providentPrincipal = _normalPrincipal(
+      opening: providentOpening,
+      annualRate: config.providentAnnualRate,
+      interest: providentInterest,
+      remainingTerms: remainingTerms,
+      repaymentMethod: config.repaymentMethod,
+    );
     return commercialPrincipal +
         commercialInterest +
         providentPrincipal +

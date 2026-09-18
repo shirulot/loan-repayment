@@ -21,6 +21,7 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
       <String, TextEditingController>{};
   // Keeps any future config synchronization from disturbing active edits.
   final Map<String, FocusNode> _focusNodes = <String, FocusNode>{};
+  String? _lastEditedDurationKey;
 
   @override
   void initState() {
@@ -70,9 +71,8 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
       'commercialAnnualRate': editableNumber(config.commercialAnnualRate * 100),
       'providentAnnualRate': editableNumber(config.providentAnnualRate * 100),
       'loanStartDate': config.loanStartDate,
-      'loanTermYears': config.loanTermYears > 0
-          ? '${config.loanTermYears}'
-          : '',
+      'loanTermYears': formatLoanEditableNumber(config.loanTermYears),
+      'remainingTerms': '${widget.viewModel.calculatedRemainingTerms}',
       'monthlySalary': editableNumber(config.monthlySalary),
       'monthlyExtraIncome': editableNumber(config.monthlyExtraIncome),
       'monthlyLivingCost': editableNumber(config.monthlyLivingCost),
@@ -95,8 +95,10 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
         (_controllers[key]?.text ?? '').toDoubleOr(0);
     final old = widget.viewModel.config;
     final loanStartDate = _controllers['loanStartDate']?.text.trim() ?? '';
-    final loanTermYears = (_controllers['loanTermYears']?.text ?? '').toIntOr(
-      0,
+    final loanTermYears = (_controllers['loanTermYears']?.text ?? '')
+        .toDoubleOr(0);
+    final remainingTerms = (_controllers['remainingTerms']?.text ?? '').toIntOr(
+      old.remainingTermsAt(widget.viewModel.calculationDate),
     );
     final hasStartDate = !loanStartDate.isBlank;
     final hasTermYears = loanTermYears > 0;
@@ -109,42 +111,49 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
       return;
     }
     if (!_hasValidRecentPrepaymentDates()) return;
-    widget.viewModel.updateConfig(
-      old.copyWith(
-        commercialOpeningBalance: number(
-          'commercialOpeningBalance',
-          old.commercialOpeningBalance,
-        ),
-        providentOpeningBalance: number(
-          'providentOpeningBalance',
-          old.providentOpeningBalance,
-        ),
-        commercialAnnualRate:
-            number('commercialAnnualRate', old.commercialAnnualRate * 100) /
-            100,
-        providentAnnualRate:
-            number('providentAnnualRate', old.providentAnnualRate * 100) / 100,
-        loanStartDate: loanStartDate,
-        loanTermYears: loanTermYears,
-        monthlySalary: number('monthlySalary', old.monthlySalary),
-        monthlyExtraIncome: number(
-          'monthlyExtraIncome',
-          old.monthlyExtraIncome,
-        ),
-        monthlyLivingCost: number('monthlyLivingCost', old.monthlyLivingCost),
-        monthlyOtherExpense: zeroIfBlank('monthlyOtherExpense'),
-        // Blank recent expected amounts intentionally fall back to cash flow.
-        fixedAugustPrepayment: zeroIfBlank('fixedAugustPrepayment'),
-        fixedSeptemberPrepayment: zeroIfBlank('fixedSeptemberPrepayment'),
-        fixedOctoberPrepayment: zeroIfBlank('fixedOctoberPrepayment'),
-        fixedAugustPrepaymentDate:
-            _controllers['fixedAugustPrepaymentDate']?.text.trim() ?? '',
-        fixedSeptemberPrepaymentDate:
-            _controllers['fixedSeptemberPrepaymentDate']?.text.trim() ?? '',
-        fixedOctoberPrepaymentDate:
-            _controllers['fixedOctoberPrepaymentDate']?.text.trim() ?? '',
+    var updatedConfig = old.copyWith(
+      commercialOpeningBalance: number(
+        'commercialOpeningBalance',
+        old.commercialOpeningBalance,
       ),
+      providentOpeningBalance: number(
+        'providentOpeningBalance',
+        old.providentOpeningBalance,
+      ),
+      commercialAnnualRate:
+          number('commercialAnnualRate', old.commercialAnnualRate * 100) / 100,
+      providentAnnualRate:
+          number('providentAnnualRate', old.providentAnnualRate * 100) / 100,
+      loanStartDate: loanStartDate,
+      loanTermYears: loanTermYears,
+      monthlySalary: number('monthlySalary', old.monthlySalary),
+      monthlyExtraIncome: number('monthlyExtraIncome', old.monthlyExtraIncome),
+      monthlyLivingCost: number('monthlyLivingCost', old.monthlyLivingCost),
+      monthlyOtherExpense: zeroIfBlank('monthlyOtherExpense'),
+      // Blank recent expected amounts intentionally fall back to cash flow.
+      fixedAugustPrepayment: zeroIfBlank('fixedAugustPrepayment'),
+      fixedSeptemberPrepayment: zeroIfBlank('fixedSeptemberPrepayment'),
+      fixedOctoberPrepayment: zeroIfBlank('fixedOctoberPrepayment'),
+      fixedAugustPrepaymentDate:
+          _controllers['fixedAugustPrepaymentDate']?.text.trim() ?? '',
+      fixedSeptemberPrepaymentDate:
+          _controllers['fixedSeptemberPrepaymentDate']?.text.trim() ?? '',
+      fixedOctoberPrepaymentDate:
+          _controllers['fixedOctoberPrepaymentDate']?.text.trim() ?? '',
     );
+    if (_lastEditedDurationKey == 'remainingTerms') {
+      updatedConfig = updatedConfig.withRemainingTermsAt(
+        widget.viewModel.calculationDate,
+        remainingTerms,
+      );
+      _controllers['loanTermYears']?.text = formatLoanEditableNumber(
+        updatedConfig.loanTermYears,
+      );
+    } else if (_lastEditedDurationKey == 'loanTermYears') {
+      _controllers['remainingTerms']?.text =
+          '${updatedConfig.remainingTermsAt(widget.viewModel.calculationDate)}';
+    }
+    widget.viewModel.updateConfig(updatedConfig);
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('参数已应用，计划已重算。')));
@@ -192,18 +201,14 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
             ),
             const SizedBox(height: 5),
             Text(
-              '填写贷款开始日期和总年限后，剩余期数会按当前月份自动计算；蓝色字段可编辑。最近三笔还款按录入金额和日期纳入计划；选择“计划还款”时，未录入的月份只按正常月供推算，选择月频率时其他月份按可供还款额累计规划。',
+              '贷款总年数与剩余期数可双向调整；修改剩余期数会按当前月份反算总年数。蓝色字段可编辑。最近三笔还款按录入金额和日期纳入计划。',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 13),
             _sectionLabel(context, '贷款期限'),
             _field('贷款开始日期', 'loanStartDate', suffix: 'YYYY-MM', date: true),
-            _field('贷款总年限', 'loanTermYears', suffix: '年', integer: true),
-            _calculatedTextField(
-              '剩余期数（自动）',
-              '${widget.viewModel.calculatedRemainingTerms}',
-              suffix: '月',
-            ),
+            _field('贷款总年数', 'loanTermYears', suffix: '年'),
+            _field('剩余期数', 'remainingTerms', suffix: '月', integer: true),
             const SizedBox(height: 8),
             _sectionLabel(context, '本金与利率'),
             _field('商贷期初本金', 'commercialOpeningBalance', suffix: '元'),
@@ -302,6 +307,9 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
       child: TextField(
         controller: _controllers[key],
         focusNode: _focusNodeFor(key),
+        onChanged: key == 'loanTermYears' || key == 'remainingTerms'
+            ? (_) => _lastEditedDurationKey = key
+            : null,
         enabled: fieldEnabled,
         readOnly: date,
         onTap: date && fieldEnabled ? () => _pickRepaymentDate(key) : null,
@@ -407,29 +415,6 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
             value,
             masked: widget.viewModel.amountsMasked,
           ),
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _calculatedTextField(
-    String label,
-    String value, {
-    required String suffix,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: label,
-          suffixText: suffix,
-          isDense: true,
-        ),
-        child: Text(
-          value,
           style: TextStyle(
             color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),

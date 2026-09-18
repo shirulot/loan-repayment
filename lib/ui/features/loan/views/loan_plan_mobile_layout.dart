@@ -12,6 +12,7 @@ import 'loan_plan_mobile_cash_flow.dart';
 import 'loan_plan_mobile_header.dart';
 import 'loan_plan_mobile_preview.dart';
 import 'loan_plan_mobile_settings.dart';
+import 'loan_repayment_method_selector.dart';
 
 /// Compact phone layout that keeps the repayment preview above the fold.
 class MobileLoanPlanLayout extends StatefulWidget {
@@ -46,6 +47,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
   final Set<String> _correctingRecentPrepaymentIds = <String>{};
   final Set<String> _expandedSections = <String>{};
   String? _highlightedPreviewMonth;
+  String? _lastEditedDurationKey;
 
   @override
   void initState() {
@@ -110,9 +112,8 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
       'commercialAnnualRate': editableNumber(config.commercialAnnualRate * 100),
       'providentAnnualRate': editableNumber(config.providentAnnualRate * 100),
       'loanStartDate': config.loanStartDate,
-      'loanTermYears': config.loanTermYears > 0
-          ? '${config.loanTermYears}'
-          : '',
+      'loanTermYears': formatLoanEditableNumber(config.loanTermYears),
+      'remainingTerms': '${widget.viewModel.calculatedRemainingTerms}',
       'monthlySalary': editableNumber(config.monthlySalary),
       'monthlyExtraIncome': editableNumber(config.monthlyExtraIncome),
       'monthlyLivingCost': editableNumber(config.monthlyLivingCost),
@@ -133,8 +134,10 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
   void _apply() {
     final old = widget.viewModel.config;
     final loanStartDate = _controllers['loanStartDate']?.text.trim() ?? '';
-    final loanTermYears = (_controllers['loanTermYears']?.text ?? '').toIntOr(
-      0,
+    final loanTermYears = (_controllers['loanTermYears']?.text ?? '')
+        .toDoubleOr(0);
+    final remainingTerms = (_controllers['remainingTerms']?.text ?? '').toIntOr(
+      old.remainingTermsAt(widget.viewModel.calculationDate),
     );
     final hasStartDate = !loanStartDate.isBlank;
     final hasTermYears = loanTermYears > 0;
@@ -148,33 +151,34 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     }
     if (!_hasValidRecentPrepaymentDates()) return;
 
-    widget.viewModel.updateConfig(
-      old.copyWith(
-        commercialOpeningBalance: _number(
-          'commercialOpeningBalance',
-          old.commercialOpeningBalance,
-        ),
-        providentOpeningBalance: _number(
-          'providentOpeningBalance',
-          old.providentOpeningBalance,
-        ),
-        commercialAnnualRate:
-            _number('commercialAnnualRate', old.commercialAnnualRate * 100) /
-            100,
-        providentAnnualRate:
-            _number('providentAnnualRate', old.providentAnnualRate * 100) / 100,
-        loanStartDate: loanStartDate,
-        loanTermYears: loanTermYears,
-        monthlySalary: _number('monthlySalary', old.monthlySalary),
-        monthlyExtraIncome: _number(
-          'monthlyExtraIncome',
-          old.monthlyExtraIncome,
-        ),
-        monthlyLivingCost: _number('monthlyLivingCost', old.monthlyLivingCost),
-        monthlyOtherExpense: _zeroIfBlank('monthlyOtherExpense'),
-        recentPrepayments: _eventsFromControllers(),
+    var updatedConfig = old.copyWith(
+      commercialOpeningBalance: _number(
+        'commercialOpeningBalance',
+        old.commercialOpeningBalance,
       ),
+      providentOpeningBalance: _number(
+        'providentOpeningBalance',
+        old.providentOpeningBalance,
+      ),
+      commercialAnnualRate:
+          _number('commercialAnnualRate', old.commercialAnnualRate * 100) / 100,
+      providentAnnualRate:
+          _number('providentAnnualRate', old.providentAnnualRate * 100) / 100,
+      loanStartDate: loanStartDate,
+      loanTermYears: loanTermYears,
+      monthlySalary: _number('monthlySalary', old.monthlySalary),
+      monthlyExtraIncome: _number('monthlyExtraIncome', old.monthlyExtraIncome),
+      monthlyLivingCost: _number('monthlyLivingCost', old.monthlyLivingCost),
+      monthlyOtherExpense: _zeroIfBlank('monthlyOtherExpense'),
+      recentPrepayments: _eventsFromControllers(),
     );
+    if (_lastEditedDurationKey == 'remainingTerms') {
+      updatedConfig = updatedConfig.withRemainingTermsAt(
+        widget.viewModel.calculationDate,
+        remainingTerms,
+      );
+    }
+    widget.viewModel.updateConfig(updatedConfig);
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('参数已应用，计划已重算。')));
@@ -439,6 +443,15 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
             },
           ),
           const SizedBox(height: 12),
+          LoanRepaymentMethodSelector(
+            method: widget.config.repaymentMethod,
+            onChanged: (method) {
+              widget.viewModel.updateConfig(
+                widget.viewModel.config.copyWith(repaymentMethod: method),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
           LoanMobileCashFlowSummary(
             config: widget.config,
             viewModel: widget.viewModel,
@@ -461,6 +474,9 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
             onRemoveRecentPrepayment: _removeRecentPrepayment,
             onCorrectRecentPrepayment: _correctRecentPrepayment,
             onConfirmRecentPrepayment: _confirmRecentPrepayment,
+            onDurationFieldChanged: (key) {
+              _lastEditedDurationKey = key;
+            },
             onSectionExpansionChanged: (title, expanded) {
               setState(() {
                 if (expanded) {

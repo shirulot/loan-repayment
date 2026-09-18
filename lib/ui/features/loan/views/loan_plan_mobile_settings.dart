@@ -22,6 +22,7 @@ class LoanMobileSettingsGroup extends StatelessWidget {
     required this.onRemoveRecentPrepayment,
     required this.onCorrectRecentPrepayment,
     required this.onConfirmRecentPrepayment,
+    required this.onDurationFieldChanged,
     required this.onSectionExpansionChanged,
   });
 
@@ -38,6 +39,7 @@ class LoanMobileSettingsGroup extends StatelessWidget {
   final ValueChanged<int> onRemoveRecentPrepayment;
   final ValueChanged<String> onCorrectRecentPrepayment;
   final ValueChanged<String> onConfirmRecentPrepayment;
+  final ValueChanged<String> onDurationFieldChanged;
   final void Function(String title, bool expanded) onSectionExpansionChanged;
 
   String _money(double value) =>
@@ -46,7 +48,7 @@ class LoanMobileSettingsGroup extends StatelessWidget {
   String _termSummary() {
     final terms = viewModel.calculatedRemainingTerms;
     return config.loanTermYears > 0
-        ? '$terms 期（${config.loanTermYears} 年）'
+        ? '$terms 期（${formatLoanEditableNumber(config.loanTermYears)} 年）'
         : '$terms 期';
   }
 
@@ -81,6 +83,8 @@ class LoanMobileSettingsGroup extends StatelessWidget {
       amountsMasked: viewModel.amountsMasked,
       onChanged: key.startsWith('recentPrepayment-')
           ? (_) => onRecentPrepaymentChanged()
+          : key == 'loanTermYears' || key == 'remainingTerms'
+          ? (_) => onDurationFieldChanged(key)
           : null,
       onPickDate: date ? () => onPickRepaymentDate(key) : null,
     );
@@ -195,12 +199,8 @@ class LoanMobileSettingsGroup extends StatelessWidget {
                 suffix: 'YYYY-MM',
                 date: true,
               ),
-              _inputField('贷款总年限', 'loanTermYears', suffix: '年', integer: true),
-              _readonlyField(
-                '剩余期数（自动）',
-                '${viewModel.calculatedRemainingTerms}',
-                suffix: '月',
-              ),
+              _inputField('贷款总年数', 'loanTermYears', suffix: '年'),
+              _inputField('剩余期数', 'remainingTerms', suffix: '月', integer: true),
             ],
           ),
           Divider(color: colors.outlineVariant.withValues(alpha: 0.48)),
