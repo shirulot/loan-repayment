@@ -272,7 +272,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
         ),
       ]);
     }
-    while (events.length < config.recentPrepaymentWindowMonths) {
+    while (events.length < LoanPlanConfig.recentPrepaymentCount) {
       events.add(_newRecentPrepayment());
     }
     return _latestRecentPrepayments(events);
@@ -288,13 +288,9 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     final retained = _latestRecentPrepayments(events);
     _replaceRecentPrepayments(retained);
     _commitRecentPrepayments();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          '已加入一笔还款，日期最远的一笔已移出最近${widget.config.recentPrepaymentWindowMonths}个月。',
-        ),
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已加入一笔还款，日期最远的一笔已移出最近三笔记录。')));
   }
 
   /// Unlocks only the selected settled event for a user-requested correction.
@@ -339,7 +335,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
         .cast<RecentPrepayment?>()
         .firstWhere((event) => event != null, orElse: () => null);
     if (replacement != null) events.add(replacement);
-    while (events.length < widget.config.recentPrepaymentWindowMonths) {
+    while (events.length < LoanPlanConfig.recentPrepaymentCount) {
       events.add(_newRecentPrepayment());
     }
     _replaceRecentPrepayments(_latestRecentPrepayments(events));
@@ -351,42 +347,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
 
   List<RecentPrepayment> _latestRecentPrepayments(
     Iterable<RecentPrepayment> source,
-  ) {
-    final newestFirst = _sortRecentPrepayments(source, ascending: false);
-    return _sortRecentPrepayments(
-      newestFirst.take(widget.config.recentPrepaymentWindowMonths),
-      ascending: true,
-    );
-  }
-
-  List<RecentPrepayment> _sortRecentPrepayments(
-    Iterable<RecentPrepayment> source, {
-    required bool ascending,
-  }) {
-    final indexed = source.toList(growable: false).indexed.toList();
-    indexed.sort((left, right) {
-      final leftDate = LoanPlanConfig.parseLoanStartDate(left.$2.repaymentDate);
-      final rightDate = LoanPlanConfig.parseLoanStartDate(
-        right.$2.repaymentDate,
-      );
-      if (leftDate == null || rightDate == null) {
-        if (leftDate == null && rightDate == null) {
-          return left.$1.compareTo(right.$1);
-        }
-        // Undated/invalid entries stay at the end in either direction.
-        return leftDate == null ? 1 : -1;
-      }
-      final comparison = leftDate.compareTo(rightDate);
-      return comparison == 0
-          ? ascending
-                ? left.$1.compareTo(right.$1)
-                : right.$1.compareTo(left.$1)
-          : ascending
-          ? comparison
-          : -comparison;
-    });
-    return indexed.map((entry) => entry.$2).toList(growable: true);
-  }
+  ) => LoanPlanConfig.latestRecentPrepayments(source);
 
   void _replaceRecentPrepayments(List<RecentPrepayment> events) {
     setState(() {
@@ -462,11 +423,18 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
           const SizedBox(height: 8),
           LoanPlanFrequencySelector(
             frequencyMonths: widget.config.prepaymentFrequencyMonths,
+            isPlanRepaymentMode: widget.config.isPlanRepaymentMode,
             onChanged: (months) {
               widget.viewModel.updateConfig(
                 widget.viewModel.config.copyWith(
                   prepaymentFrequencyMonths: months,
+                  isPlanRepaymentMode: false,
                 ),
+              );
+            },
+            onSelectPlanRepayment: () {
+              widget.viewModel.updateConfig(
+                widget.viewModel.config.copyWith(isPlanRepaymentMode: true),
               );
             },
           ),
@@ -528,7 +496,9 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
       calculationDate.day,
     );
     final currentMonth = DateTime(today.year, today.month);
-    final frequency = widget.config.prepaymentFrequencyMonths;
+    final frequency = widget.config.isPlanRepaymentMode
+        ? 1
+        : widget.config.prepaymentFrequencyMonths;
     final rowsByMonth = <DateTime, LoanPlanRow>{
       for (final row in rows)
         if (LoanPlanConfig.parseLoanStartDate(row.month) case final month?)

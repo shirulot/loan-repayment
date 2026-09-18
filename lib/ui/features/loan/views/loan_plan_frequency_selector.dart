@@ -2,31 +2,54 @@ import 'package:flutter/material.dart';
 
 import '../../../../domain/models/loan_models.dart';
 
-/// Displays and edits the planning interval for future prepayments.
+/// Displays and edits the planning interval or the explicit-plan mode.
 class LoanPlanFrequencySelector extends StatelessWidget {
   const LoanPlanFrequencySelector({
     super.key,
     required this.frequencyMonths,
+    required this.isPlanRepaymentMode,
     required this.onChanged,
+    required this.onSelectPlanRepayment,
   });
 
+  static const _planRepaymentChoice = 'plan';
+  static const _frequencyChoicePrefix = 'frequency:';
+
   final int frequencyMonths;
+  final bool isPlanRepaymentMode;
   final ValueChanged<int> onChanged;
+  final VoidCallback onSelectPlanRepayment;
 
   String _label(int months) => months == 1 ? '每月' : '每$months个月';
 
+  String _frequencyChoice(int months) => '$_frequencyChoicePrefix$months';
+
   Future<void> _openPicker(BuildContext context) async {
-    final selected = await showModalBottomSheet<int>(
+    final selectedChoice = isPlanRepaymentMode
+        ? _planRepaymentChoice
+        : _frequencyChoice(frequencyMonths);
+    final selected = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
       useSafeArea: true,
       isScrollControlled: true,
       builder: (sheetContext) => _LoanPlanFrequencySheet(
-        selectedMonths: frequencyMonths,
+        selectedChoice: selectedChoice,
         labelFor: _label,
+        frequencyChoice: _frequencyChoice,
       ),
     );
-    if (selected != null && selected != frequencyMonths) onChanged(selected);
+    if (selected == null || selected == selectedChoice) return;
+    if (selected == _planRepaymentChoice) {
+      onSelectPlanRepayment();
+      return;
+    }
+    if (selected.startsWith(_frequencyChoicePrefix)) {
+      final months = int.tryParse(
+        selected.substring(_frequencyChoicePrefix.length),
+      );
+      if (months != null) onChanged(months);
+    }
   }
 
   @override
@@ -64,7 +87,7 @@ class LoanPlanFrequencySelector extends StatelessWidget {
                 ),
               ),
               Text(
-                _label(frequencyMonths),
+                isPlanRepaymentMode ? '计划还款' : _label(frequencyMonths),
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
                   color: colors.primary,
                   fontWeight: FontWeight.w700,
@@ -82,12 +105,14 @@ class LoanPlanFrequencySelector extends StatelessWidget {
 
 class _LoanPlanFrequencySheet extends StatelessWidget {
   const _LoanPlanFrequencySheet({
-    required this.selectedMonths,
+    required this.selectedChoice,
     required this.labelFor,
+    required this.frequencyChoice,
   });
 
-  final int selectedMonths;
+  final String selectedChoice;
   final String Function(int months) labelFor;
+  final String Function(int months) frequencyChoice;
 
   @override
   Widget build(BuildContext context) {
@@ -110,18 +135,30 @@ class _LoanPlanFrequencySheet extends StatelessWidget {
                     ),
                   ),
                 ),
-                RadioGroup<int>(
-                  groupValue: selectedMonths,
+                RadioGroup<String>(
+                  groupValue: selectedChoice,
                   onChanged: (value) {
                     if (value != null) Navigator.of(context).pop(value);
                   },
                   child: Column(
                     children: [
+                      RadioListTile<String>(
+                        value: LoanPlanFrequencySelector._planRepaymentChoice,
+                        selected:
+                            selectedChoice ==
+                            LoanPlanFrequencySelector._planRepaymentChoice,
+                        title: const Text('计划还款'),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                        ),
+                        dense: true,
+                        activeColor: colors.primary,
+                      ),
                       for (final months
                           in LoanPlanConfig.prepaymentFrequencyOptions)
-                        RadioListTile<int>(
-                          value: months,
-                          selected: months == selectedMonths,
+                        RadioListTile<String>(
+                          value: frequencyChoice(months),
+                          selected: selectedChoice == frequencyChoice(months),
                           title: Text(labelFor(months)),
                           contentPadding: const EdgeInsets.symmetric(
                             horizontal: 8,
@@ -136,7 +173,10 @@ class _LoanPlanFrequencySheet extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: Text(
-                    '只反映规划，实际按照最近${selectedMonths * LoanPlanConfig.recentPrepaymentPlanningCycles}个月进行；如果没有最近还款记录，则按照预期进行。',
+                    selectedChoice ==
+                            LoanPlanFrequencySelector._planRepaymentChoice
+                        ? '计划还款只按最近三笔录入的金额和日期安排提前还款；未填写的月份只计算正常月供。'
+                        : '最近三笔还款按填写的日期与金额纳入计划；其他月份按所选频率累计可供还款额。',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: colors.onSurfaceVariant,
                       height: 1.5,

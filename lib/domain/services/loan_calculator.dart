@@ -87,27 +87,37 @@ class LoanCalculator {
       } else if (legacyActualPrepayment != null) {
         // Legacy month-keyed actual records remain authoritative during the
         // transition to event-based recent repayment data.
-        final expectedAmount = hasRecentPrepayments
+        final expectedAmount = config.isPlanRepaymentMode
+            ? _planRepaymentInputForIndex(index, config)
+            : hasRecentPrepayments
             ? 0.0
             : _expectedPrepaymentForIndex(index, config);
         requestedPrepayment = expectedAmount > 0
             ? expectedAmount
+            : config.isPlanRepaymentMode
+            ? math.max(0.0, legacyActualPrepayment)
             : math.max(0.0, availableFunds);
         accumulatedAvailableFunds = 0;
       } else {
         final isCurrentOrFutureMonth = !_isBeforeCalculationMonth(month);
-        if (isCurrentOrFutureMonth) {
+        if (isCurrentOrFutureMonth && !config.isPlanRepaymentMode) {
           accumulatedAvailableFunds += math.max(0.0, availableFunds);
         }
-        requestedPrepayment = _requestedPrepayment(
-          index: index,
-          accumulatedAvailableFunds: accumulatedAvailableFunds,
-          config: config,
-          hasRecentPrepayments: hasRecentPrepayments,
-          isPlanningMonth: isPlanningMonth,
-          isCurrentOrFutureMonth: isCurrentOrFutureMonth,
-        );
-        if (isPlanningMonth && isCurrentOrFutureMonth) {
+        // Plan mode uses entered repayments without rolling free cash into new ones.
+        requestedPrepayment = config.isPlanRepaymentMode
+            ? isCurrentOrFutureMonth
+                  ? _planRepaymentInputForIndex(index, config)
+                  : 0.0
+            : _requestedPrepayment(
+                index: index,
+                accumulatedAvailableFunds: accumulatedAvailableFunds,
+                config: config,
+                hasRecentPrepayments: hasRecentPrepayments,
+                isPlanningMonth: isPlanningMonth,
+                isCurrentOrFutureMonth: isCurrentOrFutureMonth,
+              );
+        if ((config.isPlanRepaymentMode || isPlanningMonth) &&
+            isCurrentOrFutureMonth) {
           accumulatedAvailableFunds = 0;
         }
       }
@@ -416,6 +426,26 @@ class LoanCalculator {
       2 => config.fixedOctoberPrepayment,
       _ => 0.0,
     };
+  }
+
+  double _planRepaymentInputForIndex(int index, LoanPlanConfig config) {
+    RecentPrepayment? legacyRecord;
+    for (final event in config.recentPrepayments) {
+      if (event.legacyMonthOffset == index &&
+          event.repaymentDate.trim().isEmpty) {
+        legacyRecord = event;
+        break;
+      }
+    }
+    if (legacyRecord != null) {
+      return math.max(
+        0.0,
+        legacyRecord.actualPrepayment ?? legacyRecord.amount,
+      );
+    }
+    return config.recentPrepayments.isEmpty
+        ? math.max(0.0, _expectedPrepaymentForIndex(index, config))
+        : 0.0;
   }
 
   bool _hasRecentPrepayments(LoanPlanConfig config) {

@@ -3,6 +3,9 @@ import '../../core/extensions/string_extensions.dart';
 class LoanPlanConfig {
   static const defaultPrepaymentFrequencyMonths = 1;
   static const recentPrepaymentPlanningCycles = 3;
+
+  /// Number of repayment records retained independently of planning mode.
+  static const recentPrepaymentCount = 3;
   static const prepaymentFrequencyOptions = <int>[
     1,
     2,
@@ -31,6 +34,7 @@ class LoanPlanConfig {
     this.monthlyLivingCost = 0,
     this.monthlyOtherExpense = 0,
     this.prepaymentFrequencyMonths = defaultPrepaymentFrequencyMonths,
+    this.isPlanRepaymentMode = false,
     this.fixedAugustPrepayment = 0,
     this.fixedSeptemberPrepayment = 0,
     this.fixedOctoberPrepayment = 0,
@@ -64,9 +68,8 @@ class LoanPlanConfig {
   /// The interval used when projecting future planned prepayments.
   final int prepaymentFrequencyMonths;
 
-  /// Keeps recent repayment inputs aligned with three repayment cycles.
-  int get recentPrepaymentWindowMonths =>
-      recentPrepaymentPlanningCycles * prepaymentFrequencyMonths;
+  /// Restricts planned prepayments to explicit entries or legacy expectations.
+  final bool isPlanRepaymentMode;
   final double fixedAugustPrepayment;
   final double fixedSeptemberPrepayment;
   final double fixedOctoberPrepayment;
@@ -137,6 +140,7 @@ class LoanPlanConfig {
         'prepaymentFrequencyMonths',
         defaults.prepaymentFrequencyMonths,
       ),
+      isPlanRepaymentMode: json['isPlanRepaymentMode'] == true,
       fixedAugustPrepayment: number(
         'fixedAugustPrepayment',
         defaults.fixedAugustPrepayment,
@@ -187,6 +191,7 @@ class LoanPlanConfig {
     double? monthlyLivingCost,
     double? monthlyOtherExpense,
     int? prepaymentFrequencyMonths,
+    bool? isPlanRepaymentMode,
     double? fixedAugustPrepayment,
     double? fixedSeptemberPrepayment,
     double? fixedOctoberPrepayment,
@@ -214,6 +219,7 @@ class LoanPlanConfig {
       monthlyOtherExpense: monthlyOtherExpense ?? this.monthlyOtherExpense,
       prepaymentFrequencyMonths:
           prepaymentFrequencyMonths ?? this.prepaymentFrequencyMonths,
+      isPlanRepaymentMode: isPlanRepaymentMode ?? this.isPlanRepaymentMode,
       fixedAugustPrepayment:
           fixedAugustPrepayment ?? this.fixedAugustPrepayment,
       fixedSeptemberPrepayment:
@@ -249,15 +255,16 @@ class LoanPlanConfig {
       'monthlyLivingCost': monthlyLivingCost,
       'monthlyOtherExpense': monthlyOtherExpense,
       'prepaymentFrequencyMonths': prepaymentFrequencyMonths,
+      'isPlanRepaymentMode': isPlanRepaymentMode,
       'fixedAugustPrepayment': fixedAugustPrepayment,
       'fixedSeptemberPrepayment': fixedSeptemberPrepayment,
       'fixedOctoberPrepayment': fixedOctoberPrepayment,
       'fixedAugustPrepaymentDate': fixedAugustPrepaymentDate,
       'fixedSeptemberPrepaymentDate': fixedSeptemberPrepaymentDate,
       'fixedOctoberPrepaymentDate': fixedOctoberPrepaymentDate,
-      'recentPrepayments': recentPrepayments
-          .map((prepayment) => prepayment.toJson())
-          .toList(growable: false),
+      'recentPrepayments': latestRecentPrepayments(
+        recentPrepayments,
+      ).map((prepayment) => prepayment.toJson()).toList(growable: false),
       'bankSeptemberPrincipal': bankSeptemberPrincipal,
       'bankSeptemberInterest': bankSeptemberInterest,
       'bankSeptemberPayment': bankSeptemberPayment,
@@ -281,6 +288,44 @@ class LoanPlanConfig {
     return date;
   }
 
+  /// Retains the latest repayment records, independent of planning frequency.
+  static List<RecentPrepayment> latestRecentPrepayments(
+    Iterable<RecentPrepayment> source,
+  ) {
+    final newestFirst = _sortRecentPrepayments(source, ascending: false);
+    return _sortRecentPrepayments(
+      newestFirst.take(recentPrepaymentCount),
+      ascending: true,
+    );
+  }
+
+  static List<RecentPrepayment> _sortRecentPrepayments(
+    Iterable<RecentPrepayment> source, {
+    required bool ascending,
+  }) {
+    final indexed = source.toList(growable: false).indexed.toList();
+    indexed.sort((left, right) {
+      final leftDate = parseLoanStartDate(left.$2.repaymentDate);
+      final rightDate = parseLoanStartDate(right.$2.repaymentDate);
+      if (leftDate == null || rightDate == null) {
+        if (leftDate == null && rightDate == null) {
+          return left.$1.compareTo(right.$1);
+        }
+        // Undated or invalid entries stay at the end in either direction.
+        return leftDate == null ? 1 : -1;
+      }
+      final comparison = leftDate.compareTo(rightDate);
+      return comparison == 0
+          ? ascending
+                ? left.$1.compareTo(right.$1)
+                : right.$1.compareTo(left.$1)
+          : ascending
+          ? comparison
+          : -comparison;
+    });
+    return indexed.map((entry) => entry.$2).toList(growable: true);
+  }
+
   /// Migrates the previous three fixed inputs into editable repayment events.
   /// Empty legacy dates retain their former relative-month behavior.
   static List<RecentPrepayment> _recentPrepaymentsFromJson(
@@ -288,13 +333,12 @@ class LoanPlanConfig {
   ) {
     final raw = json['recentPrepayments'];
     if (raw is List) {
-      return raw
-          .whereType<Map>()
-          .map(
-            (value) =>
-                RecentPrepayment.fromJson(Map<String, dynamic>.from(value)),
-          )
-          .toList(growable: false);
+      return latestRecentPrepayments(
+        raw.whereType<Map>().map(
+          (value) =>
+              RecentPrepayment.fromJson(Map<String, dynamic>.from(value)),
+        ),
+      );
     }
 
     double number(String key) {
@@ -302,7 +346,7 @@ class LoanPlanConfig {
       return value is num ? value.toDouble() : '$value'.toDoubleOr(0);
     }
 
-    return List<RecentPrepayment>.generate(3, (index) {
+    return List<RecentPrepayment>.generate(recentPrepaymentCount, (index) {
       final amountKey = switch (index) {
         0 => 'fixedAugustPrepayment',
         1 => 'fixedSeptemberPrepayment',

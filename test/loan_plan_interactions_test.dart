@@ -132,7 +132,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final recentSection = find.text('最近3个月提前还款');
+    final recentSection = find.text('最近三笔还款');
     await tester.ensureVisible(recentSection);
     await tester.tap(recentSection);
     await tester.pumpAndSettle();
@@ -174,13 +174,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('选择还款频率'), findsOneWidget);
-    expect(find.text('只反映规划，实际按照最近3个月进行；如果没有最近还款记录，则按照预期进行。'), findsOneWidget);
+    expect(find.text('最近三笔还款按填写的日期与金额纳入计划；其他月份按所选频率累计可供还款额。'), findsOneWidget);
     await tester.tap(find.text('每2个月'));
     await tester.pumpAndSettle();
 
     expect(viewModel.config.prepaymentFrequencyMonths, 2);
     expect(find.text('每2个月'), findsOneWidget);
-    expect(find.text('最近6个月提前还款'), findsOneWidget);
+    expect(find.text('最近三笔还款'), findsOneWidget);
     expect(find.text('未来3期还款预览'), findsOneWidget);
     final previewRows = tester
         .widgetList<LoanMobilePreviewRow>(find.byType(LoanMobilePreviewRow))
@@ -200,7 +200,7 @@ void main() {
       '¥${formatLoanMoney(augustPlanRow.expectedPrepayment + viewModel.currentAvailablePrepayment)}',
     );
 
-    final recentSection = find.text('最近6个月提前还款');
+    final recentSection = find.text('最近三笔还款');
     await tester.ensureVisible(recentSection);
     await tester.tap(recentSection);
     await tester.pumpAndSettle();
@@ -210,21 +210,65 @@ void main() {
           widget is TextField &&
           widget.decoration?.labelText?.contains('还款日期') == true,
     );
-    expect(repaymentDateFields, findsNWidgets(6));
+    expect(repaymentDateFields, findsNWidgets(3));
 
-    final sixthAmountField = find.byWidgetPredicate(
+    final thirdAmountField = find.byWidgetPredicate(
       (widget) =>
-          widget is TextField && widget.decoration?.labelText == '第 6 笔金额',
+          widget is TextField && widget.decoration?.labelText == '第 3 笔金额',
     );
-    await tester.ensureVisible(sixthAmountField);
-    await tester.enterText(sixthAmountField, '6000');
+    await tester.ensureVisible(thirdAmountField);
+    await tester.enterText(thirdAmountField, '6000');
     await tester.pump(const Duration(milliseconds: 351));
 
-    expect(viewModel.config.recentPrepayments, hasLength(6));
+    expect(viewModel.config.recentPrepayments, hasLength(3));
     expect(
       viewModel.config.recentPrepayments.map((event) => event.amount),
       contains(6000),
     );
+  });
+
+  testWidgets('selecting planned repayment mode updates the home plan', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final viewModel = createViewModel();
+    addTearDown(viewModel.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(home: LoanPlanPage(viewModel: viewModel)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('还款频率'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('每4个月'));
+    await tester.pumpAndSettle();
+
+    expect(viewModel.config.isPlanRepaymentMode, isFalse);
+    expect(viewModel.config.prepaymentFrequencyMonths, 4);
+
+    await tester.tap(find.text('还款频率'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('计划还款'));
+    await tester.pumpAndSettle();
+
+    expect(viewModel.config.isPlanRepaymentMode, isTrue);
+    expect(find.text('计划还款'), findsOneWidget);
+    final previewMonths = tester
+        .widgetList<LoanMobilePreviewRow>(find.byType(LoanMobilePreviewRow))
+        .map((row) => row.month)
+        .toList();
+    expect(previewMonths, ['月份', '2026年8月', '2026年9月', '2026年10月']);
+
+    await tester.tap(find.text('还款频率'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('每4个月'));
+    await tester.pumpAndSettle();
+
+    expect(viewModel.config.isPlanRepaymentMode, isFalse);
+    expect(viewModel.config.prepaymentFrequencyMonths, 4);
   });
 
   testWidgets(
@@ -276,7 +320,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final recentSection = find.text('最近3个月提前还款');
+      final recentSection = find.text('最近三笔还款');
       await tester.ensureVisible(recentSection);
       await tester.tap(recentSection);
       await tester.pumpAndSettle();
@@ -432,7 +476,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final recentSection = find.text('最近3个月提前还款');
+      final recentSection = find.text('最近三笔还款');
       await tester.ensureVisible(recentSection);
       await tester.tap(recentSection);
       await tester.pumpAndSettle();
@@ -544,11 +588,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final recentSection = find.text('最近3个月提前还款');
+    final recentSection = find.text('最近三笔还款');
     await tester.ensureVisible(recentSection);
     await tester.tap(recentSection);
     await tester.pumpAndSettle();
-    final addButton = find.widgetWithText(OutlinedButton, '添加一笔（保留最近3个月）');
+    final addButton = find.widgetWithText(OutlinedButton, '添加一笔（保留最近三笔）');
     tester.widget<OutlinedButton>(addButton).onPressed!();
     await tester.pumpAndSettle();
 

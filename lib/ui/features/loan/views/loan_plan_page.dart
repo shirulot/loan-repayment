@@ -67,7 +67,16 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
 
   void _updatePrepaymentFrequency(int months) {
     viewModel.updateConfig(
-      viewModel.config.copyWith(prepaymentFrequencyMonths: months),
+      viewModel.config.copyWith(
+        prepaymentFrequencyMonths: months,
+        isPlanRepaymentMode: false,
+      ),
+    );
+  }
+
+  void _selectPlanRepaymentMode() {
+    viewModel.updateConfig(
+      viewModel.config.copyWith(isPlanRepaymentMode: true),
     );
   }
 
@@ -161,7 +170,10 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
                           LoanPlanFrequencySelector(
                             frequencyMonths:
                                 viewModel.config.prepaymentFrequencyMonths,
+                            isPlanRepaymentMode:
+                                viewModel.config.isPlanRepaymentMode,
                             onChanged: _updatePrepaymentFrequency,
+                            onSelectPlanRepayment: _selectPlanRepaymentMode,
                           ),
                           const SizedBox(height: 12),
                           LoanPlanIntroBanner(viewModel: viewModel),

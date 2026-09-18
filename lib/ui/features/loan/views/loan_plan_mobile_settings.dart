@@ -169,8 +169,7 @@ class LoanMobileSettingsGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final recentPrepaymentTitle =
-        '最近${config.recentPrepaymentWindowMonths}个月提前还款';
+    const recentPrepaymentTitle = '最近三笔还款';
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -248,9 +247,7 @@ class LoanMobileSettingsGroup extends StatelessWidget {
               OutlinedButton.icon(
                 onPressed: onAddRecentPrepayment,
                 icon: const Icon(Icons.add_outlined, size: 18),
-                label: Text(
-                  '添加一笔（保留最近${config.recentPrepaymentWindowMonths}个月）',
-                ),
+                label: Text('添加一笔（保留最近三笔）'),
               ),
             ],
           ),

@@ -192,7 +192,7 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
             ),
             const SizedBox(height: 5),
             Text(
-              '填写贷款开始日期和总年限后，剩余期数会按当前月份自动计算；蓝色字段可编辑。近三个月优先使用期望还款额，留空或填 0 时按可供提前还贷额计算；未被最近还款覆盖的月份按首页选择的频率规划，间隔月份的可用金额累计到下一次。',
+              '填写贷款开始日期和总年限后，剩余期数会按当前月份自动计算；蓝色字段可编辑。最近三笔还款按录入金额和日期纳入计划；选择“计划还款”时，未录入的月份只按正常月供推算，选择月频率时其他月份按可供还款额累计规划。',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 13),

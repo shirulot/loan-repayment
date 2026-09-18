@@ -275,6 +275,42 @@ void main() {
     );
   });
 
+  test('restores and exports planned repayment mode', () {
+    final restored = LoanPlanConfig.fromJson({
+      'isPlanRepaymentMode': true,
+      'prepaymentFrequencyMonths': 8,
+    });
+
+    expect(restored.isPlanRepaymentMode, isTrue);
+    expect(restored.prepaymentFrequencyMonths, 8);
+    expect(restored.toJson()['isPlanRepaymentMode'], isTrue);
+    expect(
+      restored.copyWith(isPlanRepaymentMode: false).isPlanRepaymentMode,
+      isFalse,
+    );
+  });
+
+  test('restores only the latest three repayment records at any frequency', () {
+    final records = List<RecentPrepayment>.generate(
+      5,
+      (index) => RecentPrepayment(
+        id: 'repayment-$index',
+        amount: 1000,
+        repaymentDate: '2026-09-${(index + 1).toString().padLeft(2, '0')}',
+      ),
+    );
+    final restored = LoanPlanConfig.fromJson({
+      'prepaymentFrequencyMonths': 12,
+      'recentPrepayments': records.map((record) => record.toJson()).toList(),
+    });
+
+    expect(restored.recentPrepayments.map((record) => record.id).toList(), [
+      'repayment-2',
+      'repayment-3',
+      'repayment-4',
+    ]);
+  });
+
   test('restores parameters and actual repayments from a JSON backup', () {
     final backup = LoanCachedState.fromJson({
       'config': config.toJson(),
@@ -474,6 +510,36 @@ void main() {
     expect(september.actualPrepayment, 5000);
     expect(september.expectedPrepayment, 5000);
   });
+
+  test(
+    'planned repayment mode uses entered repayments without auto-planning',
+    () {
+      const planConfig = LoanPlanConfig(
+        commercialOpeningBalance: 120000,
+        commercialAnnualRate: 0,
+        remainingTerms: 12,
+        monthlySalary: 10000,
+        prepaymentFrequencyMonths: 6,
+        isPlanRepaymentMode: true,
+        recentPrepayments: [
+          RecentPrepayment(
+            id: 'september-plan',
+            amount: 5000,
+            repaymentDate: '2026-09-15',
+          ),
+        ],
+      );
+      final rows = calculator.calculate(planConfig, const <String, double?>{});
+      final september = rows.firstWhere((row) => row.month == '2026-09');
+      final october = rows.firstWhere((row) => row.month == '2026-10');
+
+      expect(rows.first.expectedPrepayment, 0);
+      expect(september.expectedPrepayment, 5000);
+      expect(october.availableFunds, greaterThan(0));
+      expect(october.totalPayment, lessThan(september.totalPayment));
+      expect(october.expectedPrepayment, 0);
+    },
+  );
 
   test('zero recent expected amounts fall back to available funds', () {
     final fallbackConfig = config.copyWith(
