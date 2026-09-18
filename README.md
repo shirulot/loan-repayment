@@ -2,7 +2,7 @@
 
 一个离线运行的 Flutter 提前还贷规划工具。应用根据商贷、公积金、现金流和提前还款记录生成滚动还款计划，帮助用户核对当前月供、预计提前还款额、贷款余额和预计结清月份。
 
-应用不依赖业务服务器。贷款参数、现金流、提前还款记录和计划列设置保存在本机，当前适配 Android、macOS 与 Windows。
+应用不依赖业务服务器。贷款参数、现金流、提前还款记录和计划列设置保存在本机，当前适配 Android、iOS、macOS 与 Windows。
 
 ## 功能概览
 
@@ -66,7 +66,7 @@
 
 - Flutter SDK：Dart `^3.12.2`
 - 主要依赖：`flutter_localizations`、`lunar`、`path_provider`、`file_picker`
-- 平台：Android、macOS、Windows
+- 平台：Android、iOS 15 及以上、macOS、Windows
 
 ## 运行
 
@@ -84,18 +84,21 @@ flutter run -d <设备ID>
 flutter run -d macos
 flutter run -d windows
 flutter run -d <Android设备ID>
+flutter run -d <iOS设备ID>
 ```
 
 ## 构建
 
 ```bash
 flutter build apk --release
+flutter build ios --release
 flutter build macos --release
 flutter build windows --release
 ```
 
 - Android Release APK 输出：`build/app/outputs/flutter-apk/app-release.apk`。
-- macOS 构建需在 macOS 上执行；Windows 构建需在 Windows 上执行。
+- iOS、macOS 构建需在 macOS 上执行。iOS Runner 使用占位 Bundle ID `com.example.loanRepaymentManager`；真机调试或发布前，在 Xcode 的 Runner target → Signing & Capabilities 中改成自己的唯一 Bundle ID 并选择开发团队。
+- Windows 构建需在 Windows 上执行。
 
 ## 验证
 
