@@ -62,8 +62,8 @@ class LoanMobileCashFlowSummary extends StatelessWidget {
                       amountsMasked: viewModel.amountsMasked,
                     ),
                     _LoanMobileCashMetric(
-                      label: '当月月供',
-                      value: viewModel.currentMonthlyPayment,
+                      label: '次月月供',
+                      value: viewModel.nextMonthlyPayment,
                       icon: Icons.credit_card_outlined,
                       accent: true,
                       amountsMasked: viewModel.amountsMasked,
@@ -107,7 +107,7 @@ class LoanMobileCashFlowSummary extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      '¥${_money(viewModel.currentAvailablePrepayment)}',
+                      '¥${_money(viewModel.nextMonthAvailablePrepayment)}',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontSize: 18,
                         color: colors.error,

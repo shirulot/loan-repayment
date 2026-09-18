@@ -9,6 +9,7 @@ import 'package:loan_repayment_manager/ui/features/loan/views/loan_calculator_pa
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_detail_page.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_calendar_formatters.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_formatters.dart';
+import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_mobile_cash_flow.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_mobile_layout.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_mobile_preview.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_page.dart';
@@ -43,6 +44,70 @@ void main() {
     expect(formatLoanEditableNumber(500000), '500000');
     expect(formatLoanEditableNumber(1.2), '1.2');
     expect(formatLoanEditableNumber(0), '');
+  });
+
+  testWidgets('top home cash-flow card uses next month repayment values', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final viewModel = LoanPlannerViewModel(
+      calculator: LoanCalculator(currentDate: DateTime(2026, 9, 19)),
+      initialConfig: const LoanPlanConfig(
+        commercialOpeningBalance: 100000,
+        commercialAnnualRate: 0.05,
+        remainingTerms: 120,
+        monthlySalary: 12000,
+        monthlyLivingCost: 3000,
+        recentPrepayments: [
+          RecentPrepayment(
+            id: 'august-settled',
+            amount: 5000,
+            actualPrepayment: 5000,
+            repaymentDate: '2026-08-15',
+            isSettled: true,
+          ),
+        ],
+      ),
+    );
+    addTearDown(viewModel.dispose);
+
+    final septemberRow = viewModel.rows.firstWhere(
+      (row) => row.month == '2026-09',
+    );
+    final octoberRow = viewModel.rows.firstWhere(
+      (row) => row.month == '2026-10',
+    );
+    expect(
+      (septemberRow.totalPayment - octoberRow.totalPayment).abs(),
+      greaterThan(0.01),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: LoanMobileCashFlowSummary(
+              config: viewModel.config,
+              viewModel: viewModel,
+              onTap: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('次月月供'), findsOneWidget);
+    expect(
+      find.text('¥${formatLoanMoney(octoberRow.totalPayment)}'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('¥${formatLoanMoney(octoberRow.availableFunds)}'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('editing an amount preserves its text and caret', (tester) async {

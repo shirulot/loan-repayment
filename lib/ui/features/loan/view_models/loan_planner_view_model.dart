@@ -120,6 +120,20 @@ class LoanPlannerViewModel extends ChangeNotifier {
     return current?.totalPayment ?? 0;
   }
 
+  /// 首页顶部现金流摘要显示次月月供。
+  double get nextMonthlyPayment => _nextPlanRow?.totalPayment ?? 0;
+
+  /// 首页顶部可提前还贷额按次月月供估算。
+  double get nextMonthAvailablePrepayment {
+    final next = _nextPlanRow;
+    if (next != null) return next.availableFunds;
+    return _config.monthlySalary -
+        nextMonthlyPayment -
+        _config.monthlyLivingCost +
+        _config.monthlyExtraIncome -
+        _config.monthlyOtherExpense;
+  }
+
   /// Uses the same normal-payment row as [currentMonthlyPayment].
   double get currentAvailablePrepayment {
     final current = _currentPlanRow;
