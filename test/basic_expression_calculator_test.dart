@@ -38,6 +38,17 @@ void main() {
     },
   );
 
+  test('temporary calculator references retain their calculation process', () {
+    final viewModel = LoanPlannerViewModel();
+    addTearDown(viewModel.dispose);
+
+    viewModel.saveTemporaryCalculatorResult(3, expression: '1 + 2');
+
+    final reference = viewModel.temporaryCalculatorReferences.single;
+    expect(reference.value, 3);
+    expect(reference.expression, '1 + 2');
+  });
+
   test(
     'month aliases find every numeric reference in the matching plan row',
     () {

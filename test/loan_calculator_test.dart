@@ -14,6 +14,7 @@ class _NoopCacheService extends LoanCacheService {
     Map<String, double?> actualPrepayments, {
     String calculatorExpression = '',
     List<double> temporaryCalculatorResults = const <double>[],
+    List<String?> temporaryCalculatorExpressions = const <String?>[],
   }) async {}
 }
 
@@ -393,7 +394,9 @@ void main() {
       'actualPrepayments': const <String, double>{},
       'calculatorExpression': '1 + 2',
       'temporaryCalculatorResults': [3, 42.5],
+      'temporaryCalculatorExpressions': ['1 + 2', null],
     });
+    expect(cached.toJson()['temporaryCalculatorExpressions'], ['1 + 2', null]);
     final viewModel = LoanPlannerViewModel(
       calculator: calculator,
       cacheService: const _NoopCacheService(),
@@ -406,6 +409,10 @@ void main() {
       3,
       42.5,
     ]);
+    expect(
+      viewModel.temporaryCalculatorReferences.map((item) => item.expression),
+      ['1 + 2', null],
+    );
     viewModel.dispose();
   });
 

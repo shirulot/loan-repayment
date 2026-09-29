@@ -23,6 +23,7 @@ class MobileLoanPlanLayout extends StatefulWidget {
     required this.onViewDetails,
     required this.onViewMonth,
     required this.onShowInfo,
+    this.onPrepaymentDeleted,
   });
 
   final LoanPlannerViewModel viewModel;
@@ -30,6 +31,7 @@ class MobileLoanPlanLayout extends StatefulWidget {
   final VoidCallback onViewDetails;
   final ValueChanged<String> onViewMonth;
   final VoidCallback onShowInfo;
+  final ValueChanged<String>? onPrepaymentDeleted;
 
   @override
   State<MobileLoanPlanLayout> createState() => _MobileLoanPlanLayoutState();
@@ -320,6 +322,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
 
   void _removeRecentPrepayment(int index) {
     final removedEvent = _recentPrepayments[index];
+    widget.onPrepaymentDeleted?.call(removedEvent.id);
     final events = _eventsFromControllers()..removeAt(index);
     final existingIds = events.map((event) => event.id).toSet();
     final existingPayments = events

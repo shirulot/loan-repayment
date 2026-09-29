@@ -6,10 +6,12 @@ class LoanPlanMobileNavigationBar extends StatelessWidget {
     super.key,
     required this.selectedIndex,
     required this.onDestinationSelected,
+    this.calendarUnreadCount,
   });
 
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
+  final int? calendarUnreadCount;
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +40,7 @@ class LoanPlanMobileNavigationBar extends StatelessWidget {
       child: NavigationBar(
         selectedIndex: selectedIndex,
         onDestinationSelected: onDestinationSelected,
-        destinations: const [
+        destinations: [
           NavigationDestination(
             icon: Icon(Icons.home_outlined),
             selectedIcon: Icon(Icons.home),
@@ -53,6 +55,20 @@ class LoanPlanMobileNavigationBar extends StatelessWidget {
             selectedIcon: Icon(Icons.calculate),
             label: '计算器',
           ),
+          if (calendarUnreadCount case final unreadCount?)
+            NavigationDestination(
+              icon: Badge(
+                isLabelVisible: unreadCount > 0,
+                smallSize: 8,
+                child: const Icon(Icons.calendar_month_outlined),
+              ),
+              selectedIcon: Badge(
+                isLabelVisible: unreadCount > 0,
+                smallSize: 8,
+                child: const Icon(Icons.calendar_month),
+              ),
+              label: '日历',
+            ),
         ],
       ),
     );

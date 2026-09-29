@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../calendar/view_models/calendar_view_model.dart';
+import '../../calendar/views/calendar_page.dart';
 import '../view_models/loan_planner_view_model.dart';
 import 'loan_plan_detail_page.dart';
 import 'loan_calculator_page.dart';
@@ -14,19 +16,91 @@ import 'loan_month_detail_page.dart';
 import 'loan_repayment_method_selector.dart';
 
 class LoanPlanPage extends StatefulWidget {
-  const LoanPlanPage({super.key, required this.viewModel});
+  const LoanPlanPage({
+    super.key,
+    required this.viewModel,
+    this.calendarViewModel,
+  });
 
   final LoanPlannerViewModel viewModel;
+  final CalendarViewModel? calendarViewModel;
 
   @override
   State<LoanPlanPage> createState() => _LoanPlanPageState();
 }
 
-class _LoanPlanPageState extends State<LoanPlanPage> {
+class _LoanPlanPageState extends State<LoanPlanPage>
+    with WidgetsBindingObserver {
   var _mobileTabIndex = 0;
   String? _pendingDetailMonth;
+  DateTime? _calendarInitialDate;
 
   LoanPlannerViewModel get viewModel => widget.viewModel;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    widget.calendarViewModel?.addListener(_onCalendarChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final date = widget.calendarViewModel?.takePendingNotificationDate();
+      if (date != null) _openCalendarAt(date);
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant LoanPlanPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.calendarViewModel != widget.calendarViewModel) {
+      oldWidget.calendarViewModel?.removeListener(_onCalendarChanged);
+      widget.calendarViewModel?.addListener(_onCalendarChanged);
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      widget.calendarViewModel?.onAppResumed();
+    }
+  }
+
+  void _onCalendarChanged() {
+    final date = widget.calendarViewModel?.takePendingNotificationDate();
+    if (date != null) {
+      _openCalendarAt(date);
+    } else if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _openCalendarAt(DateTime date) {
+    final calendarViewModel = widget.calendarViewModel;
+    if (!mounted || calendarViewModel == null) return;
+    if (MediaQuery.sizeOf(context).width < 640) {
+      setState(() {
+        _mobileTabIndex = 3;
+        _calendarInitialDate = date;
+      });
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CalendarPage(
+          viewModel: calendarViewModel,
+          initialSelectedDate: date,
+        ),
+      ),
+    );
+  }
+
+  void _openCalendar() => _openCalendarAt(DateTime.now());
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    widget.calendarViewModel?.removeListener(_onCalendarChanged);
+    super.dispose();
+  }
 
   Future<void> _openDetails() async {
     await _openDetailsAtMonth();
@@ -115,6 +189,17 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
                   titleSpacing: 20,
                   title: const Text('提前还贷计算器'),
                   actions: [
+                    if (widget.calendarViewModel != null)
+                      IconButton(
+                        tooltip: '日历',
+                        onPressed: _openCalendar,
+                        icon: Badge(
+                          isLabelVisible:
+                              widget.calendarViewModel!.unreadCount > 0,
+                          smallSize: 8,
+                          child: const Icon(Icons.calendar_month_outlined),
+                        ),
+                      ),
                     IconButton(
                       tooltip: viewModel.amountsMasked ? '显示金额' : '隐藏金额',
                       onPressed: viewModel.toggleAmountsMasked,
@@ -131,6 +216,7 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
               ? LoanPlanMobileNavigationBar(
                   selectedIndex: _mobileTabIndex,
                   onDestinationSelected: _selectMobileTab,
+                  calendarUnreadCount: widget.calendarViewModel?.unreadCount,
                 )
               : null,
           body: SafeArea(
@@ -149,6 +235,8 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
                         onViewDetails: _openDetails,
                         onViewMonth: _openDetailsForMonth,
                         onShowInfo: _showMobileInfo,
+                        onPrepaymentDeleted:
+                            widget.calendarViewModel?.removeLinkedPrepayment,
                       ),
                       LoanPlanDetailPage(
                         viewModel: viewModel,
@@ -156,6 +244,11 @@ class _LoanPlanPageState extends State<LoanPlanPage> {
                         initialMonth: _pendingDetailMonth,
                       ),
                       LoanCalculatorPage(viewModel: viewModel),
+                      if (widget.calendarViewModel != null)
+                        CalendarPage(
+                          viewModel: widget.calendarViewModel!,
+                          initialSelectedDate: _calendarInitialDate,
+                        ),
                     ],
                   );
                 }

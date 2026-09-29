@@ -1,8 +1,8 @@
 # 提前还贷计算器
 
-一个离线运行的 Flutter 提前还贷规划工具。应用根据商贷、公积金、现金流和提前还款记录生成滚动还款计划，帮助用户核对当前月供、预计提前还款额、贷款余额和预计结清月份。
+贷款计算可离线运行的 Flutter 提前还贷规划工具。应用根据商贷、公积金、现金流和提前还款记录生成滚动还款计划，帮助用户核对当前月供、预计提前还款额、贷款余额和预计结清月份。
 
-应用不依赖业务服务器。贷款参数、现金流、提前还款记录和计划列设置保存在本机，当前适配 Android、iOS、macOS 与 Windows。
+应用不依赖业务服务器。贷款参数、现金流、提前还款记录、日历和计划列设置保存在本机；日历调休数据联网更新，离线时使用缓存和内置规则。当前适配 Android、iOS、macOS 与 Windows；系统通知支持 Android 和 iOS。
 
 ## 功能概览
 
@@ -16,6 +16,9 @@
 - **还贷日期与提前利息**：日期使用 `YYYY-MM-DD`，可通过中文日期选择器填写。提前还款当天应付利息单独列出，按 `提前还款本金 × 年利率 ÷ 360 × 已占用天数` 计算；商贷月供本身不额外叠加商贷转息利息，公积金仍保留剩余天数结转规则。
 - **转息前月供与差额**：计划表展示不含银行账单校准、结转息和当月提前还款影响的基础月供，并根据基础月供计算减少额；`转息差额 = 月供合计 - 转息前月供`。
 - **移动端界面**：首页采用现金流四宫格、参数折叠项和最近三笔预览；“还款计划”Tab 直接显示完整详情，表格支持横向滚动、居中紧凑显示和列设置。
+- **日历与提醒**：日历显示公历、农历、节假日和工作日，可添加单次备注、每月重复备注，以及商贷和公积金扣款节点；重复日期可按固定日期或工作日规则安排。提前还款记录会同步为日历节点，未读节点会显示提示标记。
+- **本地通知与调休日历**：Android 和 iOS 可为日历节点设置本地通知，点击通知会打开对应日期。联网时每月尝试更新当年和下一年的节假日及调休数据；更新失败时继续使用缓存和内置日历规则。
+- **计算器算式暂存**：可将当前算式结果暂存为引用值。重新插入空算式时会恢复原算式，插入已有算式时作为单个引用值使用；暂存结果和算式会随本地状态保存。
 - **金额脱敏**：首页与还款计划详情共享脱敏开关，开启后金额和还贷日期显示为星号，关闭后恢复显示。
 - **数据导入导出**：详情页支持导出 Excel 兼容 `.xls`、CSV 和 JSON；JSON 备份可导入并恢复贷款参数、现金流、提前还款记录和实际还款数据。
 - **本地缓存与迁移**：编辑内容自动保存，下次启动优先读取最近缓存；新安装不预置金额。Android 已配置系统 Auto Backup 与设备迁移规则，是否能在删除重装后恢复取决于系统备份能力。
@@ -28,12 +31,16 @@
 3. 点击“应用并重算”确认贷款参数，提前还款记录的修改会直接同步到还款计划。实际还款金额以对应记录为单位维护；同月多笔会在详情表中展开成多行。
 4. 切换到“还款计划”Tab 查看完整计划。默认显示商贷、公积金、合计月供及减少额、预期提前、还贷日期/状态、当日提前利息、转息前月供、转息差额和余额等字段。
 5. 在详情页可开启金额脱敏、选择显示列、导出文件或导入 JSON 备份。列显示偏好会单独缓存，并在新增列时自动迁移一次。
+6. 打开“日历”查看节假日、工作日和日历节点；通过“扣款日”设置商贷、公积金月度节点，通过加号添加单次或重复备注。Android/iOS 首次启用通知时需授予系统通知权限。
+7. 在“计算器”Tab 输入算式并暂存结果，可将暂存值重新插入当前算式；清空算式后插入时会显示原计算过程。
 
 > 计划结果用于辅助规划，实际扣款、提前还款利息、违约金和最终结清金额以银行合同及还款后账单为准。
 
 ## 数据存储与备份
 
 - 贷款状态文件：应用 Documents 目录下的 `loan-repayment-plans/loan-plan-state.json`。
+- 日历节点和重复规则：同目录下的 `calendar-state.json`。
+- 节假日与调休缓存：同目录下的 `chinese-holiday-calendar.json`。
 - 计划列设置：同目录下的 `loan-plan-column-settings.json`，与贷款数据分开保存。
 - 导出文件目录：应用 Documents 目录下的 `loan-repayment-plans`。
 - JSON 导出包含贷款参数、实际提前还款数据、提前还款事件和计划明细，可用于跨设备手动备份与恢复。
@@ -67,7 +74,7 @@
 ## 开发环境
 
 - Flutter SDK：Dart `^3.12.2`
-- 主要依赖：`flutter_localizations`、`lunar`、`path_provider`、`file_picker`
+- 主要依赖：`flutter_localizations`、`lunar`、`path_provider`、`file_picker`、`flutter_local_notifications`、`http`、`timezone`
 - 平台：Android、iOS 15 及以上、macOS、Windows
 
 ## 运行
@@ -110,23 +117,35 @@ flutter analyze
 flutter test
 ```
 
-测试覆盖等额本金/等额本息计算、360 天商贷计息、贷款年数与期数双向换算、按日期计算提前还款利息、公积金结转息、转息前月供与转息差额、现金流、同月多笔提前还款、动态结清、缓存/备份恢复、金额格式化、脱敏和详情表交互。
+测试覆盖等额本金/等额本息计算、360 天商贷计息、贷款年数与期数双向换算、按日期计算提前还款利息、公积金结转息、转息前月供与转息差额、现金流、同月多笔提前还款、动态结清、缓存/备份恢复、计算器算式暂存、日历重复规则与调休日历、金额格式化、脱敏和详情表交互。
 
 ## 目录说明
 
 ```text
 lib/
 ├── domain/
-│   ├── models/loan_models.dart                    # 贷款配置、提前还款事件与计划行模型
-│   └── services/loan_calculator.dart               # 核心还款计算
+│   ├── models/
+│   │   ├── loan_models.dart                        # 贷款配置、提前还款事件与计划行模型
+│   │   ├── calendar_models.dart                    # 日历节点、重复规则与缓存模型
+│   │   └── chinese_holiday_calendar_snapshot.dart  # 节假日与调休快照
+│   └── services/
+│       ├── loan_calculator.dart                    # 核心还款计算
+│       ├── calendar_monthly_rule_scheduler.dart    # 月度日历规则调度
+│       └── chinese_workday_calendar.dart           # 工作日、节假日与调休判断
 ├── data/services/
 │   ├── loan_cache_service.dart                     # 本地状态缓存
+│   ├── calendar_cache_service.dart                 # 日历节点缓存
+│   ├── calendar_notification_service.dart          # Android/iOS 本地通知
+│   ├── chinese_holiday_calendar_cache_service.dart # 节假日与调休缓存
+│   ├── chinese_holiday_calendar_update_service.dart # 调休日历更新
 │   ├── loan_plan_import_service.dart               # JSON 备份导入
-│   ├── loan_plan_column_settings_service.dart     # 计划列设置缓存
+│   ├── loan_plan_column_settings_service.dart      # 计划列设置缓存
 │   └── loan_export_service.dart                    # CSV、XLS、JSON 导出
 └── ui/
     ├── theme/loan_palette.dart                     # 统一色板
-    └── features/loan/
-        ├── view_models/loan_planner_view_model.dart
-        └── views/                                  # 首页、移动端与计划详情
+    └── features/
+        ├── loan/
+        │   ├── view_models/loan_planner_view_model.dart
+        │   └── views/                              # 首页、移动端与计划详情
+        └── calendar/                               # 日历、重复规则与节点详情
 ```

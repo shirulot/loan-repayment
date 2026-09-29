@@ -12,12 +12,14 @@ class LoanCachedState {
     required this.actualPrepayments,
     this.calculatorExpression = '',
     this.temporaryCalculatorResults = const <double>[],
+    this.temporaryCalculatorExpressions = const <String?>[],
   });
 
   final LoanPlanConfig config;
   final Map<String, double?> actualPrepayments;
   final String calculatorExpression;
   final List<double> temporaryCalculatorResults;
+  final List<String?> temporaryCalculatorExpressions;
 
   /// Parses both cache files and JSON backups exported by this application.
   factory LoanCachedState.fromJson(Map<dynamic, dynamic> json) {
@@ -43,11 +45,21 @@ class LoanCachedState {
         if (value is num) temporaryCalculatorResults.add(value.toDouble());
       }
     }
+    final temporaryCalculatorExpressions = <String?>[];
+    final expressionsJson = json['temporaryCalculatorExpressions'];
+    if (expressionsJson is List) {
+      for (final expression in expressionsJson) {
+        temporaryCalculatorExpressions.add(
+          expression is String ? expression : null,
+        );
+      }
+    }
     return LoanCachedState(
       config: LoanPlanConfig.fromJson(Map<String, dynamic>.from(configJson)),
       actualPrepayments: actualPrepayments,
       calculatorExpression: json['calculatorExpression']?.toString() ?? '',
       temporaryCalculatorResults: temporaryCalculatorResults,
+      temporaryCalculatorExpressions: temporaryCalculatorExpressions,
     );
   }
 
@@ -57,6 +69,7 @@ class LoanCachedState {
     'actualPrepayments': actualPrepayments,
     'calculatorExpression': calculatorExpression,
     'temporaryCalculatorResults': temporaryCalculatorResults,
+    'temporaryCalculatorExpressions': temporaryCalculatorExpressions,
   };
 }
 
@@ -90,6 +103,7 @@ class LoanCacheService {
     Map<String, double?> actualPrepayments, {
     String calculatorExpression = '',
     List<double> temporaryCalculatorResults = const <double>[],
+    List<String?> temporaryCalculatorExpressions = const <String?>[],
   }) async {
     final file = await _stateFile();
     final payload = LoanCachedState(
@@ -97,6 +111,7 @@ class LoanCacheService {
       actualPrepayments: actualPrepayments,
       calculatorExpression: calculatorExpression,
       temporaryCalculatorResults: temporaryCalculatorResults,
+      temporaryCalculatorExpressions: temporaryCalculatorExpressions,
     ).toJson();
     await file.writeAsString(
       const JsonEncoder.withIndent('  ').convert(payload),

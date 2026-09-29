@@ -71,17 +71,11 @@ class _LoanCalculatorPageState extends State<LoanCalculatorPage> {
 
   void _calculate() {
     try {
-      final result = _calculator.evaluate(
+      _calculator.evaluate(
         _expressionController.text,
         widget.viewModel.calculatorReferenceValues,
       );
-      // Editable loan fields use an empty string for zero, but a calculator
-      // result must keep zero visible so the just-finished equation is clear.
-      final resultText = result == 0 ? '0' : formatLoanEditableNumber(result);
-      _expressionController.value = TextEditingValue(
-        text: resultText,
-        selection: TextSelection.collapsed(offset: resultText.length),
-      );
+      // Keep the formula available for review and for saving its process.
       setState(() => _error = null);
     } on FormatException catch (error) {
       setState(() => _error = error.message);
@@ -94,8 +88,22 @@ class _LoanCalculatorPageState extends State<LoanCalculatorPage> {
   }
 
   void _saveTemporaryResult(double result) {
-    widget.viewModel.saveTemporaryCalculatorResult(result);
+    widget.viewModel.saveTemporaryCalculatorResult(
+      result,
+      expression: _expressionController.text,
+    );
     setState(() {});
+  }
+
+  void _insertTemporaryReference(CalculatorReference reference) {
+    final expression = reference.expression;
+    // A blank calculator shows the saved process; an existing formula uses
+    // the staged number as one atomic reference.
+    _append(
+      _expressionController.text.isEmpty && expression != null
+          ? '($expression)'
+          : '【${reference.label}】',
+    );
   }
 
   @override
@@ -173,7 +181,7 @@ class _LoanCalculatorPageState extends State<LoanCalculatorPage> {
                 .map(
                   (reference) => LoanCalculatorReferenceChip(
                     reference: reference,
-                    onSelected: () => _append('【${reference.label}】'),
+                    onSelected: () => _insertTemporaryReference(reference),
                   ),
                 )
                 .toList(),

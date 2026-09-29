@@ -1006,6 +1006,70 @@ void main() {
     expect(find.textContaining('搜索月份、农历月'), findsOneWidget);
   });
 
+  testWidgets(
+    'calculator stages its formula but inserts its result in an active expression',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final viewModel = createViewModel();
+      addTearDown(viewModel.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: LoanCalculatorPage(viewModel: viewModel)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      for (final key in ['1', '+', '2']) {
+        final keyButton = find.widgetWithText(OutlinedButton, key);
+        await tester.ensureVisible(keyButton);
+        await tester.tap(keyButton);
+      }
+      await tester.tap(find.text('='));
+      await tester.pump();
+
+      TextField calculatorInput() =>
+          tester.widget<TextField>(find.byType(TextField).first);
+      expect(calculatorInput().controller!.text, '1+2');
+      expect(find.text('结果：3.00'), findsOneWidget);
+
+      final saveButton = find.text('暂存结果为引用值');
+      await tester.ensureVisible(saveButton);
+      await tester.tap(saveButton);
+      await tester.pump();
+      expect(viewModel.temporaryCalculatorReferences.single.expression, '1+2');
+
+      final clearButton = find.byTooltip('一键置空');
+      await tester.ensureVisible(clearButton);
+      await tester.tap(clearButton);
+      await tester.pump();
+      final stagedChip = find.textContaining('暂存结果 1');
+      await tester.ensureVisible(stagedChip);
+      await tester.tap(stagedChip);
+      await tester.pump();
+      await tester.drag(find.byType(ListView).first, const Offset(0, 2000));
+      await tester.pumpAndSettle();
+      expect(calculatorInput().controller!.text, '(1+2)');
+      expect(find.text('结果：3.00'), findsOneWidget);
+
+      await tester.ensureVisible(clearButton);
+      await tester.tap(clearButton);
+      for (final key in ['4', '+']) {
+        final keyButton = find.widgetWithText(OutlinedButton, key);
+        await tester.ensureVisible(keyButton);
+        await tester.tap(keyButton);
+      }
+      await tester.ensureVisible(stagedChip);
+      await tester.tap(stagedChip);
+      await tester.pump();
+      await tester.drag(find.byType(ListView).first, const Offset(0, 2000));
+      await tester.pumpAndSettle();
+      expect(calculatorInput().controller!.text, '4+【暂存结果 1】');
+      expect(find.text('结果：7.00'), findsOneWidget);
+    },
+  );
+
   testWidgets('switching mobile tabs keeps the calculator expression', (
     tester,
   ) async {

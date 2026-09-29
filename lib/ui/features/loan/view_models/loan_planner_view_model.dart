@@ -8,11 +8,12 @@ import '../../../../data/services/loan_cache_service.dart';
 import '../../../../domain/models/loan_models.dart';
 import '../../../../domain/services/loan_calculator.dart';
 
-/// A numeric value that can be inserted into the calculator expression.
+/// A numeric calculator reference that may retain its source expression.
 class CalculatorReference {
   const CalculatorReference({
     required this.label,
     required this.value,
+    this.expression,
     this.isHomeSummary = false,
     this.isPlanValue = false,
     this.searchKeywords = const [],
@@ -20,6 +21,7 @@ class CalculatorReference {
 
   final String label;
   final double value;
+  final String? expression;
   final bool isHomeSummary;
   final bool isPlanValue;
   final List<String> searchKeywords;
@@ -445,11 +447,12 @@ class LoanPlannerViewModel extends ChangeNotifier {
     _persist();
   }
 
-  void saveTemporaryCalculatorResult(double value) {
+  void saveTemporaryCalculatorResult(double value, {String expression = ''}) {
     _temporaryCalculatorReferences.add(
       CalculatorReference(
         label: '暂存结果 ${_nextTemporaryCalculatorReference++}',
         value: value,
+        expression: expression.isEmpty ? null : expression,
       ),
     );
     _persist();
@@ -475,6 +478,7 @@ class LoanPlannerViewModel extends ChangeNotifier {
         _calculatorExpression = cachedState.calculatorExpression;
         _restoreTemporaryCalculatorResults(
           cachedState.temporaryCalculatorResults,
+          cachedState.temporaryCalculatorExpressions,
         );
       }
     } catch (_) {
@@ -526,7 +530,10 @@ class LoanPlannerViewModel extends ChangeNotifier {
       ..clear()
       ..addAll(state.actualPrepayments);
     _calculatorExpression = state.calculatorExpression;
-    _restoreTemporaryCalculatorResults(state.temporaryCalculatorResults);
+    _restoreTemporaryCalculatorResults(
+      state.temporaryCalculatorResults,
+      state.temporaryCalculatorExpressions,
+    );
     _recalculate();
     _persist();
   }
@@ -542,13 +549,21 @@ class LoanPlannerViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _restoreTemporaryCalculatorResults(List<double> results) {
+  void _restoreTemporaryCalculatorResults(
+    List<double> results,
+    List<String?> expressions,
+  ) {
     _temporaryCalculatorReferences
       ..clear()
       ..addAll(
         results.indexed.map(
-          (item) =>
-              CalculatorReference(label: '暂存结果 ${item.$1 + 1}', value: item.$2),
+          (item) => CalculatorReference(
+            label: '暂存结果 ${item.$1 + 1}',
+            value: item.$2,
+            expression: item.$1 < expressions.length
+                ? expressions[item.$1]
+                : null,
+          ),
         ),
       );
     _nextTemporaryCalculatorReference =
@@ -562,6 +577,9 @@ class LoanPlannerViewModel extends ChangeNotifier {
     final temporaryCalculatorResults = _temporaryCalculatorReferences
         .map((reference) => reference.value)
         .toList(growable: false);
+    final temporaryCalculatorExpressions = _temporaryCalculatorReferences
+        .map((reference) => reference.expression)
+        .toList(growable: false);
     // Queue writes so rapid edits cannot finish out of order and restore stale data.
     _pendingSave = _pendingSave.then((_) async {
       try {
@@ -570,6 +588,7 @@ class LoanPlannerViewModel extends ChangeNotifier {
           actualPrepayments,
           calculatorExpression: calculatorExpression,
           temporaryCalculatorResults: temporaryCalculatorResults,
+          temporaryCalculatorExpressions: temporaryCalculatorExpressions,
         );
       } catch (_) {
         // A cache failure must not interrupt editing or calculation.
