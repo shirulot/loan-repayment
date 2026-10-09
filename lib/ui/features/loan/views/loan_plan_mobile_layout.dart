@@ -12,6 +12,7 @@ import 'loan_plan_mobile_cash_flow.dart';
 import 'loan_plan_mobile_header.dart';
 import 'loan_plan_mobile_preview.dart';
 import 'loan_plan_mobile_settings.dart';
+import 'loan_plan_responsive_home.dart';
 import 'loan_repayment_method_selector.dart';
 
 /// Compact phone layout that keeps the repayment preview above the fold.
@@ -23,7 +24,9 @@ class MobileLoanPlanLayout extends StatefulWidget {
     required this.onViewDetails,
     required this.onViewMonth,
     required this.onShowInfo,
+    this.onOpenAppearance,
     this.onPrepaymentDeleted,
+    this.parametersOnly = false,
   });
 
   final LoanPlannerViewModel viewModel;
@@ -31,7 +34,11 @@ class MobileLoanPlanLayout extends StatefulWidget {
   final VoidCallback onViewDetails;
   final ValueChanged<String> onViewMonth;
   final VoidCallback onShowInfo;
+  final VoidCallback? onOpenAppearance;
   final ValueChanged<String>? onPrepaymentDeleted;
+
+  // 计划页复用同一套表单处理，不另建桌面数据规则。
+  final bool parametersOnly;
 
   @override
   State<MobileLoanPlanLayout> createState() => _MobileLoanPlanLayoutState();
@@ -50,6 +57,8 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
   final Set<String> _expandedSections = <String>{};
   String? _highlightedPreviewMonth;
   String? _lastEditedDurationKey;
+  // 跨单双栏重排时保留输入框的焦点、光标及展开状态。
+  final _settingsKey = GlobalKey();
 
   @override
   void initState() {
@@ -410,9 +419,64 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
 
   @override
   Widget build(BuildContext context) {
-    final rows = widget.viewModel.rows;
     final mediaQuery = MediaQuery.of(context);
-    // Keep compact financial rows legible when the system font scale is large.
+    final frequency = LoanPlanFrequencySelector(
+      frequencyMonths: widget.config.prepaymentFrequencyMonths,
+      isPlanRepaymentMode: widget.config.isPlanRepaymentMode,
+      onChanged: (months) {
+        widget.viewModel.updateConfig(
+          widget.viewModel.config.copyWith(
+            prepaymentFrequencyMonths: months,
+            isPlanRepaymentMode: false,
+          ),
+        );
+      },
+      onSelectPlanRepayment: () {
+        widget.viewModel.updateConfig(
+          widget.viewModel.config.copyWith(isPlanRepaymentMode: true),
+        );
+      },
+    );
+    final method = LoanRepaymentMethodSelector(
+      method: widget.config.repaymentMethod,
+      onChanged: (method) {
+        widget.viewModel.updateConfig(
+          widget.viewModel.config.copyWith(repaymentMethod: method),
+        );
+      },
+    );
+    final settings = LoanMobileSettingsGroup(
+      key: _settingsKey,
+      config: widget.config,
+      viewModel: widget.viewModel,
+      recentPrepayments: _recentPrepayments,
+      correctingRecentPrepaymentIds: _correctingRecentPrepaymentIds,
+      expandedSections: _expandedSections,
+      controllerFor: _controllerFor,
+      focusNodeFor: _focusNodeFor,
+      onPickRepaymentDate: (key) {
+        _pickRepaymentDate(key);
+      },
+      onRecentPrepaymentChanged: _scheduleRecentPrepaymentSync,
+      onAddRecentPrepayment: _addRecentPrepayment,
+      onRemoveRecentPrepayment: _removeRecentPrepayment,
+      onCorrectRecentPrepayment: _correctRecentPrepayment,
+      onConfirmRecentPrepayment: _confirmRecentPrepayment,
+      onDurationFieldChanged: (key) {
+        _lastEditedDurationKey = key;
+      },
+      onSectionExpansionChanged: (title, expanded) {
+        setState(() {
+          if (expanded) {
+            _expandedSections.add(title);
+          } else {
+            _expandedSections.remove(title);
+          }
+        });
+      },
+    );
+    final applyButton = LoanMobileApplyButton(onPressed: _apply);
+    // 页面重排仅改变呈现，所有控制器、还款修正及校验继续由此状态管理。
     return MediaQuery(
       data: mediaQuery.copyWith(
         textScaler: mediaQuery.textScaler.clamp(
@@ -420,88 +484,37 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
           maxScaleFactor: 1.1,
         ),
       ),
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-        children: [
-          LoanMobilePageHeader(
-            viewModel: widget.viewModel,
-            onShowInfo: widget.onShowInfo,
-          ),
-          const SizedBox(height: 8),
-          LoanPlanFrequencySelector(
-            frequencyMonths: widget.config.prepaymentFrequencyMonths,
-            isPlanRepaymentMode: widget.config.isPlanRepaymentMode,
-            onChanged: (months) {
-              widget.viewModel.updateConfig(
-                widget.viewModel.config.copyWith(
-                  prepaymentFrequencyMonths: months,
-                  isPlanRepaymentMode: false,
-                ),
-              );
-            },
-            onSelectPlanRepayment: () {
-              widget.viewModel.updateConfig(
-                widget.viewModel.config.copyWith(isPlanRepaymentMode: true),
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-          LoanRepaymentMethodSelector(
-            method: widget.config.repaymentMethod,
-            onChanged: (method) {
-              widget.viewModel.updateConfig(
-                widget.viewModel.config.copyWith(repaymentMethod: method),
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-          LoanMobileCashFlowSummary(
-            config: widget.config,
-            viewModel: widget.viewModel,
-            onTap: _openCashFlowEditor,
-          ),
-          const SizedBox(height: 16),
-          LoanMobileSettingsGroup(
-            config: widget.config,
-            viewModel: widget.viewModel,
-            recentPrepayments: _recentPrepayments,
-            correctingRecentPrepaymentIds: _correctingRecentPrepaymentIds,
-            expandedSections: _expandedSections,
-            controllerFor: _controllerFor,
-            focusNodeFor: _focusNodeFor,
-            onPickRepaymentDate: (key) {
-              _pickRepaymentDate(key);
-            },
-            onRecentPrepaymentChanged: _scheduleRecentPrepaymentSync,
-            onAddRecentPrepayment: _addRecentPrepayment,
-            onRemoveRecentPrepayment: _removeRecentPrepayment,
-            onCorrectRecentPrepayment: _correctRecentPrepayment,
-            onConfirmRecentPrepayment: _confirmRecentPrepayment,
-            onDurationFieldChanged: (key) {
-              _lastEditedDurationKey = key;
-            },
-            onSectionExpansionChanged: (title, expanded) {
-              setState(() {
-                if (expanded) {
-                  _expandedSections.add(title);
-                } else {
-                  _expandedSections.remove(title);
-                }
-              });
-            },
-          ),
-          const SizedBox(height: 12),
-          LoanMobilePreviewSection(
-            viewModel: widget.viewModel,
-            periods: _futurePreviewPeriods(rows),
-            highlightedMonth: _highlightedPreviewMonth,
-            onViewDetails: widget.onViewDetails,
-            onRowTap: _handlePreviewRowTap,
-          ),
-          const SizedBox(height: 18),
-          LoanMobileApplyButton(onPressed: _apply),
-        ],
-      ),
+      child: widget.parametersOnly
+          ? LoanParameterEditorLayout(
+              frequency: frequency,
+              method: method,
+              settings: settings,
+              applyButton: applyButton,
+            )
+          : LoanResponsiveHome(
+              header: LoanMobilePageHeader(
+                viewModel: widget.viewModel,
+                onShowInfo: widget.onShowInfo,
+                onOpenAppearance: widget.onOpenAppearance ?? () {},
+              ),
+              frequency: frequency,
+              method: method,
+              settings: settings,
+              cashFlow: LoanMobileCashFlowSummary(
+                config: widget.config,
+                viewModel: widget.viewModel,
+                onTap: _openCashFlowEditor,
+              ),
+              preview: LoanMobilePreviewSection(
+                viewModel: widget.viewModel,
+                periods: _futurePreviewPeriods(widget.viewModel.rows),
+                highlightedMonth: _highlightedPreviewMonth,
+                onViewDetails: widget.onViewDetails,
+                onRowTap: _handlePreviewRowTap,
+              ),
+              applyButton: applyButton,
+              viewModel: widget.viewModel,
+            ),
     );
   }
 

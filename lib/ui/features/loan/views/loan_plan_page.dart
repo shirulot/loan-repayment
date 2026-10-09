@@ -3,27 +3,27 @@ import 'package:flutter/material.dart';
 import '../../calendar/view_models/calendar_view_model.dart';
 import '../../calendar/views/calendar_page.dart';
 import '../view_models/loan_planner_view_model.dart';
-import 'loan_plan_detail_page.dart';
+import 'loan_plan_workspace.dart';
 import 'loan_calculator_page.dart';
-import 'loan_plan_card.dart';
-import 'loan_plan_frequency_selector.dart';
-import 'loan_plan_intro_banner.dart';
 import 'loan_plan_mobile_layout.dart';
+import 'loan_plan_layout_style.dart';
 import 'loan_plan_mobile_navigation.dart';
-import 'loan_plan_parameter_card.dart';
-import 'loan_plan_summary_strip.dart';
 import 'loan_month_detail_page.dart';
-import 'loan_repayment_method_selector.dart';
+import '../../settings/views/app_appearance_settings_sheet.dart';
 
 class LoanPlanPage extends StatefulWidget {
   const LoanPlanPage({
     super.key,
     required this.viewModel,
     this.calendarViewModel,
+    this.themeMode = ThemeMode.system,
+    this.onThemeModeChanged,
   });
 
   final LoanPlannerViewModel viewModel;
   final CalendarViewModel? calendarViewModel;
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode>? onThemeModeChanged;
 
   @override
   State<LoanPlanPage> createState() => _LoanPlanPageState();
@@ -31,7 +31,7 @@ class LoanPlanPage extends StatefulWidget {
 
 class _LoanPlanPageState extends State<LoanPlanPage>
     with WidgetsBindingObserver {
-  var _mobileTabIndex = 0;
+  var _selectedTabIndex = 0;
   String? _pendingDetailMonth;
   DateTime? _calendarInitialDate;
 
@@ -76,24 +76,24 @@ class _LoanPlanPageState extends State<LoanPlanPage>
   void _openCalendarAt(DateTime date) {
     final calendarViewModel = widget.calendarViewModel;
     if (!mounted || calendarViewModel == null) return;
-    if (MediaQuery.sizeOf(context).width < 640) {
-      setState(() {
-        _mobileTabIndex = 3;
-        _calendarInitialDate = date;
-      });
-      return;
-    }
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => CalendarPage(
-          viewModel: calendarViewModel,
-          initialSelectedDate: date,
-        ),
+    // All window sizes share the same destinations and calendar selection.
+    setState(() {
+      _selectedTabIndex = 3;
+      _calendarInitialDate = date;
+    });
+  }
+
+  void _openAppearanceSettings() {
+    showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (_) => AppAppearanceSettingsSheet(
+        selectedMode: widget.themeMode,
+        onChanged: (mode) => widget.onThemeModeChanged?.call(mode),
       ),
     );
   }
-
-  void _openCalendar() => _openCalendarAt(DateTime.now());
 
   @override
   void dispose() {
@@ -118,41 +118,17 @@ class _LoanPlanPageState extends State<LoanPlanPage>
   }
 
   Future<void> _openDetailsAtMonth([String? month]) async {
-    if (MediaQuery.sizeOf(context).width < 640) {
-      setState(() {
-        _mobileTabIndex = 1;
-        _pendingDetailMonth = month;
-      });
-      return;
-    }
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) =>
-            LoanPlanDetailPage(viewModel: viewModel, initialMonth: month),
-      ),
-    );
-  }
-
-  void _selectMobileTab(int index) {
     setState(() {
-      _mobileTabIndex = index;
-      _pendingDetailMonth = null;
+      _selectedTabIndex = 1;
+      _pendingDetailMonth = month;
     });
   }
 
-  void _updatePrepaymentFrequency(int months) {
-    viewModel.updateConfig(
-      viewModel.config.copyWith(
-        prepaymentFrequencyMonths: months,
-        isPlanRepaymentMode: false,
-      ),
-    );
-  }
-
-  void _selectPlanRepaymentMode() {
-    viewModel.updateConfig(
-      viewModel.config.copyWith(isPlanRepaymentMode: true),
-    );
+  void _selectTab(int index) {
+    setState(() {
+      _selectedTabIndex = index;
+      _pendingDetailMonth = null;
+    });
   }
 
   void _showMobileInfo() {
@@ -181,143 +157,70 @@ class _LoanPlanPageState extends State<LoanPlanPage>
     return ListenableBuilder(
       listenable: viewModel,
       builder: (context, _) {
-        final isMobile = MediaQuery.sizeOf(context).width < 640;
         return Scaffold(
-          appBar: isMobile
-              ? null
-              : AppBar(
-                  titleSpacing: 20,
-                  title: const Text('提前还贷计算器'),
-                  actions: [
-                    if (widget.calendarViewModel != null)
-                      IconButton(
-                        tooltip: '日历',
-                        onPressed: _openCalendar,
-                        icon: Badge(
-                          isLabelVisible:
-                              widget.calendarViewModel!.unreadCount > 0,
-                          smallSize: 8,
-                          child: const Icon(Icons.calendar_month_outlined),
-                        ),
-                      ),
-                    IconButton(
-                      tooltip: viewModel.amountsMasked ? '显示金额' : '隐藏金额',
-                      onPressed: viewModel.toggleAmountsMasked,
-                      icon: Icon(
-                        viewModel.amountsMasked
-                            ? Icons.visibility_off_outlined
-                            : Icons.visibility_outlined,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                ),
-          bottomNavigationBar: isMobile
-              ? LoanPlanMobileNavigationBar(
-                  selectedIndex: _mobileTabIndex,
-                  onDestinationSelected: _selectMobileTab,
-                  calendarUnreadCount: widget.calendarViewModel?.unreadCount,
-                )
-              : null,
+          bottomNavigationBar: LoanPlanMobileNavigationBar(
+            selectedIndex: _selectedTabIndex,
+            onDestinationSelected: _selectTab,
+            calendarUnreadCount: widget.calendarViewModel?.unreadCount,
+          ),
           body: SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                if (constraints.maxWidth < 640) {
-                  // Keep each tab mounted so stateful surfaces (especially the
-                  // calculator's expression controller) survive tab changes.
-                  return IndexedStack(
-                    index: _mobileTabIndex,
-                    alignment: Alignment.topCenter,
-                    children: [
-                      MobileLoanPlanLayout(
-                        viewModel: viewModel,
-                        config: viewModel.config,
-                        onViewDetails: _openDetails,
-                        onViewMonth: _openDetailsForMonth,
-                        onShowInfo: _showMobileInfo,
-                        onPrepaymentDeleted:
-                            widget.calendarViewModel?.removeLinkedPrepayment,
-                      ),
-                      LoanPlanDetailPage(
-                        viewModel: viewModel,
-                        embedded: true,
-                        initialMonth: _pendingDetailMonth,
-                      ),
-                      LoanCalculatorPage(viewModel: viewModel),
-                      if (widget.calendarViewModel != null)
-                        CalendarPage(
-                          viewModel: widget.calendarViewModel!,
-                          initialSelectedDate: _calendarInitialDate,
-                        ),
-                    ],
-                  );
-                }
-                final isWide = constraints.maxWidth >= 1080;
-                return SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 1680),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          LoanPlanFrequencySelector(
-                            frequencyMonths:
-                                viewModel.config.prepaymentFrequencyMonths,
-                            isPlanRepaymentMode:
-                                viewModel.config.isPlanRepaymentMode,
-                            onChanged: _updatePrepaymentFrequency,
-                            onSelectPlanRepayment: _selectPlanRepaymentMode,
-                          ),
-                          const SizedBox(height: 12),
-                          LoanRepaymentMethodSelector(
-                            method: viewModel.config.repaymentMethod,
-                            onChanged: (method) {
-                              viewModel.updateConfig(
-                                viewModel.config.copyWith(
-                                  repaymentMethod: method,
-                                ),
-                              );
-                            },
-                          ),
-                          const SizedBox(height: 12),
-                          LoanPlanIntroBanner(viewModel: viewModel),
-                          const SizedBox(height: 16),
-                          LoanPlanSummaryStrip(viewModel: viewModel),
-                          const SizedBox(height: 20),
-                          if (isWide)
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                SizedBox(
-                                  width: 350,
-                                  child: LoanPlanParameterCard(
-                                    viewModel: viewModel,
-                                  ),
-                                ),
-                                const SizedBox(width: 20),
-                                Expanded(
-                                  child: LoanPlanCard(
-                                    onViewDetails: _openDetails,
-                                  ),
-                                ),
-                              ],
-                            )
-                          else ...[
-                            LoanPlanParameterCard(viewModel: viewModel),
-                            const SizedBox(height: 20),
-                            LoanPlanCard(onViewDetails: _openDetails),
-                          ],
-                        ],
-                      ),
-                    ),
+            // Keep the same subtree across window resizes so tab selection,
+            // unfinished form edits and calculator state remain intact.
+            child: IndexedStack(
+              index: _selectedTabIndex,
+              alignment: Alignment.topCenter,
+              children: [
+                MobileLoanPlanLayout(
+                  viewModel: viewModel,
+                  config: viewModel.config,
+                  onViewDetails: _openDetails,
+                  onViewMonth: _openDetailsForMonth,
+                  onShowInfo: _showMobileInfo,
+                  onOpenAppearance: _openAppearanceSettings,
+                  onPrepaymentDeleted:
+                      widget.calendarViewModel?.removeLinkedPrepayment,
+                ),
+                LoanPlanWorkspace(
+                  viewModel: viewModel,
+                  initialMonth: _pendingDetailMonth,
+                  active: _selectedTabIndex == 1,
+                  onPrepaymentDeleted:
+                      widget.calendarViewModel?.removeLinkedPrepayment,
+                ),
+                _LoanCompactSurface(
+                  child: LoanCalculatorPage(viewModel: viewModel),
+                ),
+                if (widget.calendarViewModel != null)
+                  CalendarPage(
+                    viewModel: widget.calendarViewModel!,
+                    initialSelectedDate: _calendarInitialDate,
                   ),
-                );
-              },
+              ],
             ),
           ),
         );
       },
+    );
+  }
+}
+
+/// Preserve the phone layout's readable proportions in a resizable window;
+/// the repayment table and calendar retain their own wide-screen layouts.
+class _LoanCompactSurface extends StatelessWidget {
+  const _LoanCompactSurface({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(
+          maxWidth: LoanPlanLayoutStyle.maxCompactWidth,
+        ),
+        child: child,
+      ),
     );
   }
 }

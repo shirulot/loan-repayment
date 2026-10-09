@@ -34,22 +34,28 @@ class CalendarNotificationService {
   final FlutterLocalNotificationsPlugin _plugin;
   bool _initialized = false;
 
+  // macOS 与移动端共用提醒实例和点击载荷，仅由插件适配系统通知。
+  bool get _supportsNotifications =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS);
+
   Future<void> initialize({
     required ValueChanged<String> onNotificationTap,
   }) async {
-    if (kIsWeb ||
-        (defaultTargetPlatform != TargetPlatform.android &&
-            defaultTargetPlatform != TargetPlatform.iOS)) {
-      return;
-    }
+    if (!_supportsNotifications) return;
 
+    // 各端都在用户启用提醒时申请权限，启动应用不主动弹出授权框。
+    const darwinSettings = DarwinInitializationSettings(
+      requestAlertPermission: false,
+      requestBadgePermission: false,
+      requestSoundPermission: false,
+    );
     const settings = InitializationSettings(
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-      iOS: DarwinInitializationSettings(
-        requestAlertPermission: false,
-        requestBadgePermission: false,
-        requestSoundPermission: false,
-      ),
+      iOS: darwinSettings,
+      macOS: darwinSettings,
     );
     await _plugin.initialize(
       settings: settings,
@@ -69,12 +75,7 @@ class CalendarNotificationService {
   }
 
   Future<bool> requestPermission() async {
-    if (!_initialized ||
-        kIsWeb ||
-        (defaultTargetPlatform != TargetPlatform.android &&
-            defaultTargetPlatform != TargetPlatform.iOS)) {
-      return false;
-    }
+    if (!_initialized || !_supportsNotifications) return false;
     if (defaultTargetPlatform == TargetPlatform.android) {
       final android = _plugin
           .resolvePlatformSpecificImplementation<
@@ -94,12 +95,29 @@ class CalendarNotificationService {
           ) ??
           false;
     }
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      final macos = _plugin
+          .resolvePlatformSpecificImplementation<
+            MacOSFlutterLocalNotificationsPlugin
+          >();
+      return await macos?.requestPermissions(
+            alert: true,
+            badge: false,
+            sound: true,
+          ) ??
+          false;
+    }
     return false;
   }
 
   Future<void> reschedule(List<CalendarReminderOccurrence> reminders) async {
     if (!_initialized) return;
     await _plugin.cancelAllPendingNotifications();
+    const darwinDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentSound: true,
+      presentBadge: false,
+    );
     const details = NotificationDetails(
       android: AndroidNotificationDetails(
         _channelId,
@@ -109,11 +127,8 @@ class CalendarNotificationService {
         priority: Priority.high,
         channelShowBadge: false,
       ),
-      iOS: DarwinNotificationDetails(
-        presentAlert: true,
-        presentSound: true,
-        presentBadge: false,
-      ),
+      iOS: darwinDetails,
+      macOS: darwinDetails,
     );
     for (var index = 0; index < reminders.length; index++) {
       final reminder = reminders[index];

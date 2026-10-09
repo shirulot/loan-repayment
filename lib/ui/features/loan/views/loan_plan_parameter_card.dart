@@ -315,7 +315,7 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
         onTap: date && fieldEnabled ? () => _pickRepaymentDate(key) : null,
         obscureText: suffix == '元' && widget.viewModel.amountsMasked,
         obscuringCharacter: '*',
-        style: const TextStyle(color: Color(0xff0b5cad)),
+        style: TextStyle(color: Theme.of(context).colorScheme.primary),
         keyboardType: date
             ? TextInputType.datetime
             : TextInputType.numberWithOptions(decimal: !integer),

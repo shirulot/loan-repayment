@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../view_models/loan_planner_view_model.dart';
@@ -30,6 +32,10 @@ class LoanPlanFrozenOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return LayoutBuilder(builder: _buildOverlay);
+  }
+
+  Widget _buildOverlay(BuildContext context, BoxConstraints constraints) {
     return ListenableBuilder(
       listenable: Listenable.merge([verticalController, horizontalController]),
       builder: (context, _) {
@@ -37,10 +43,18 @@ class LoanPlanFrozenOverlay extends StatelessWidget {
             ? verticalController.offset
             : 0.0;
         final horizontalOffset = horizontalController.hasClients
-            ? horizontalController.offset
+            // 窗口重排时滚动范围先变化；按当前几何约束裁切旧偏移，避免表头错位。
+            ? horizontalController.offset.clamp(
+                0.0,
+                math.max(
+                  0.0,
+                  tableWidth - constraints.maxWidth + _tableInset * 2,
+                ),
+              )
             : 0.0;
         final fixedWidth = LoanPlanTable.fixedColumnWidth(
           visibleColumns: visibleColumns,
+          tableWidth: tableWidth,
         );
         final headerColor = Theme.of(context).colorScheme.primary;
 
@@ -80,6 +94,7 @@ class LoanPlanFrozenOverlay extends StatelessWidget {
               child: IgnorePointer(
                 child: LoanPlanFrozenFixedHeader(
                   visibleColumns: visibleColumns,
+                  tableWidth: tableWidth,
                 ),
               ),
             ),
@@ -97,6 +112,7 @@ class LoanPlanFrozenOverlay extends StatelessWidget {
                     amountsMasked: amountsMasked,
                     highlightedMonth: highlightedMonth,
                     onRowTap: onRowTap,
+                    tableWidth: tableWidth,
                   ),
                 ),
               ),
@@ -123,28 +139,35 @@ class LoanPlanFrozenHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final columns = LoanPlanTable.columns(visibleColumns: visibleColumns);
-    return SizedBox(
-      width: tableWidth,
-      height: LoanPlanTable.headerHeight,
-      child: Table(
-        columnWidths: LoanPlanTable.columnWidthMap(
-          visibleColumns: visibleColumns,
-        ),
-        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-        border: LoanPlanTable.tableBorder(colors),
-        children: [
-          TableRow(
-            decoration: BoxDecoration(color: colors.primary),
-            children: columns
-                .map(
-                  (column) => LoanPlanTable.headerCell(
-                    column.header,
-                    backgroundColor: colors.primary,
-                  ),
-                )
-                .toList(),
+    // 冻结表头的完整宽度不能被可见区域压窄，否则与表格正文的列边界不同。
+    return OverflowBox(
+      alignment: Alignment.topLeft,
+      minWidth: tableWidth,
+      maxWidth: tableWidth,
+      child: SizedBox(
+        width: tableWidth,
+        height: LoanPlanTable.headerHeight,
+        child: Table(
+          columnWidths: LoanPlanTable.columnWidthMap(
+            visibleColumns: visibleColumns,
           ),
-        ],
+          defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+          border: LoanPlanTable.tableBorder(colors),
+          children: [
+            TableRow(
+              decoration: BoxDecoration(color: colors.primary),
+              children: columns
+                  .map(
+                    (column) => LoanPlanTable.headerCell(
+                      column.header,
+                      backgroundColor: colors.primary,
+                      foregroundColor: colors.onPrimary,
+                    ),
+                  )
+                  .toList(),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -152,19 +175,24 @@ class LoanPlanFrozenHeader extends StatelessWidget {
 
 /// Renders the fixed month columns in the table header.
 class LoanPlanFrozenFixedHeader extends StatelessWidget {
-  const LoanPlanFrozenFixedHeader({super.key, required this.visibleColumns});
+  const LoanPlanFrozenFixedHeader({
+    super.key,
+    required this.visibleColumns,
+    required this.tableWidth,
+  });
 
   final Set<LoanPlanColumnKey> visibleColumns;
+  final double tableWidth;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final columns = LoanPlanTable.fixedColumns(visibleColumns: visibleColumns);
     return Table(
-      columnWidths: {
-        for (var index = 0; index < columns.length; index++)
-          index: FixedColumnWidth(columns[index].width),
-      },
+      columnWidths: LoanPlanTable.fixedColumnWidthMap(
+        visibleColumns: visibleColumns,
+        tableWidth: tableWidth,
+      ),
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       border: LoanPlanTable.tableBorder(colors),
       children: [
@@ -175,6 +203,7 @@ class LoanPlanFrozenFixedHeader extends StatelessWidget {
                 (column) => LoanPlanTable.headerCell(
                   column.header,
                   backgroundColor: colors.primary,
+                  foregroundColor: colors.onPrimary,
                 ),
               )
               .toList(),
@@ -193,6 +222,7 @@ class LoanPlanFrozenFixedColumns extends StatelessWidget {
     required this.amountsMasked,
     required this.highlightedMonth,
     required this.onRowTap,
+    required this.tableWidth,
   });
 
   final LoanPlannerViewModel viewModel;
@@ -200,16 +230,17 @@ class LoanPlanFrozenFixedColumns extends StatelessWidget {
   final bool amountsMasked;
   final String? highlightedMonth;
   final ValueChanged<String> onRowTap;
+  final double tableWidth;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final columns = LoanPlanTable.fixedColumns(visibleColumns: visibleColumns);
     return Table(
-      columnWidths: {
-        for (var index = 0; index < columns.length; index++)
-          index: FixedColumnWidth(columns[index].width),
-      },
+      columnWidths: LoanPlanTable.fixedColumnWidthMap(
+        visibleColumns: visibleColumns,
+        tableWidth: tableWidth,
+      ),
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       border: LoanPlanTable.tableBorder(colors),
       children: LoanPlanDisplayRow.expand(viewModel.rows).asMap().entries.map((

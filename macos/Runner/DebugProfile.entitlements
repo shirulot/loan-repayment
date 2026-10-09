@@ -6,6 +6,12 @@
 	<true/>
 	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
+	<!-- 仅读取用户明确选中的贷款计划 JSON 文件。 -->
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
+	<!-- 下载共享日历规则使用的节假日与调休数据。 -->
+	<key>com.apple.security.network.client</key>
+	<true/>
 	<key>com.apple.security.network.server</key>
 	<true/>
 </dict>

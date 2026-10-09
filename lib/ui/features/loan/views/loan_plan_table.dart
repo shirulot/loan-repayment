@@ -165,10 +165,36 @@ class LoanPlanTable extends StatelessWidget {
 
   static double fixedColumnWidth({
     required Set<LoanPlanColumnKey> visibleColumns,
+    double? tableWidth,
   }) {
+    final growth = _columnGrowth(visibleColumns, tableWidth);
     return fixedColumns(
       visibleColumns: visibleColumns,
-    ).fold<double>(0, (total, column) => total + column.width);
+    ).fold<double>(0, (total, column) => total + column.width + growth);
+  }
+
+  // 无弹性列的 Table 会把宽窗口剩余空间均分给所有列；冻结层使用同样的增量。
+  static double _columnGrowth(
+    Set<LoanPlanColumnKey> visibleColumns,
+    double? tableWidth,
+  ) {
+    if (tableWidth == null) return 0;
+    final extra = tableWidth - minimumWidth(visibleColumns: visibleColumns);
+    return extra > 0
+        ? extra / columns(visibleColumns: visibleColumns).length
+        : 0;
+  }
+
+  static Map<int, TableColumnWidth> fixedColumnWidthMap({
+    required Set<LoanPlanColumnKey> visibleColumns,
+    required double tableWidth,
+  }) {
+    final fixed = fixedColumns(visibleColumns: visibleColumns);
+    final growth = _columnGrowth(visibleColumns, tableWidth);
+    return {
+      for (var index = 0; index < fixed.length; index++)
+        index: FixedColumnWidth(fixed[index].width + growth),
+    };
   }
 
   static Map<int, TableColumnWidth> columnWidthMap({
@@ -196,8 +222,11 @@ class LoanPlanTable extends StatelessWidget {
           decoration: BoxDecoration(color: colors.primary),
           children: columnsToRender
               .map(
-                (column) =>
-                    headerCell(column.header, backgroundColor: colors.primary),
+                (column) => headerCell(
+                  column.header,
+                  backgroundColor: colors.primary,
+                  foregroundColor: colors.onPrimary,
+                ),
               )
               .toList(),
         ),
@@ -432,7 +461,11 @@ class LoanPlanTable extends StatelessWidget {
     };
   }
 
-  static Widget headerCell(String text, {required Color backgroundColor}) {
+  static Widget headerCell(
+    String text, {
+    required Color backgroundColor,
+    required Color foregroundColor,
+  }) {
     return ColoredBox(
       color: backgroundColor,
       child: SizedBox(
@@ -445,11 +478,11 @@ class LoanPlanTable extends StatelessWidget {
             maxLines: 2,
             textAlign: TextAlign.center,
             overflow: TextOverflow.clip,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 10.5,
               height: 1.05,
               fontWeight: FontWeight.w700,
-              color: Colors.white,
+              color: foregroundColor,
             ),
           ),
         ),

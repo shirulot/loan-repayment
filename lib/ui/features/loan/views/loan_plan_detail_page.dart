@@ -11,6 +11,7 @@ import 'loan_month_detail_page.dart';
 import 'loan_plan_column_settings_sheet.dart';
 import 'loan_plan_frozen_overlay.dart';
 import 'loan_plan_table.dart';
+import 'loan_plan_responsive_home.dart';
 
 class LoanPlanDetailPage extends StatefulWidget {
   const LoanPlanDetailPage({
@@ -18,11 +19,16 @@ class LoanPlanDetailPage extends StatefulWidget {
     required this.viewModel,
     this.embedded = false,
     this.initialMonth,
+    this.onViewParameters,
+    this.showOverview = false,
   });
 
   final LoanPlannerViewModel viewModel;
   final bool embedded;
   final String? initialMonth;
+  // 仅在表格无法与参数并排时提供抽屉入口。
+  final VoidCallback? onViewParameters;
+  final bool showOverview;
 
   @override
   State<LoanPlanDetailPage> createState() => _LoanPlanDetailPageState();
@@ -263,6 +269,8 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
   Widget _buildContent(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        // 矮横屏与键盘弹出时，把列设置收进标题栏，优先保留表格高度。
+        final compactHeader = widget.embedded && constraints.maxHeight < 360;
         final minimumTableWidth = LoanPlanTable.minimumWidth(
           visibleColumns: _visibleColumns,
         );
@@ -285,6 +293,25 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
                         ),
                       ),
                     ),
+                    if (widget.onViewParameters != null)
+                      TextButton(
+                        onPressed: widget.onViewParameters,
+                        child: const Text('查看参数'),
+                      ),
+                    if (compactHeader)
+                      IconButton(
+                        tooltip: '列设置',
+                        onPressed: _openColumnSettings,
+                        icon: const Icon(Icons.view_column_outlined),
+                      ),
+                    if (compactHeader)
+                      const Tooltip(
+                        message: '实际提前金额仅填本金；利息按当月实际天数计算，剩余天数利息结转下月。',
+                        child: Padding(
+                          padding: EdgeInsets.all(8),
+                          child: Icon(Icons.info_outline, size: 18),
+                        ),
+                      ),
                     IconButton(
                       tooltip: widget.viewModel.amountsMasked ? '显示金额' : '隐藏金额',
                       onPressed: widget.viewModel.toggleAmountsMasked,
@@ -323,34 +350,46 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
                 padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
                 child: SelectableText(
                   '最近导出：$_exportPath',
+                  maxLines: compactHeader ? 1 : null,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
-              child: Text(
-                '实际提前金额仅填本金；利息按当月实际天数计算，剩余天数利息结转下月。',
-                style: Theme.of(context).textTheme.bodySmall,
+            if (!compactHeader)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
+                child: Text(
+                  '实际提前金额仅填本金；利息按当月实际天数计算，剩余天数利息结转下月。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '已显示 ${_visibleColumns.length + 1} 列',
-                      style: Theme.of(context).textTheme.bodySmall,
+            if (!compactHeader)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '已显示 ${_visibleColumns.length + 1} 列',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     ),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: _openColumnSettings,
-                    icon: const Icon(Icons.view_column_outlined, size: 18),
-                    label: const Text('列设置'),
-                  ),
-                ],
+                    OutlinedButton.icon(
+                      onPressed: _openColumnSettings,
+                      icon: const Icon(Icons.view_column_outlined, size: 18),
+                      label: const Text('列设置'),
+                    ),
+                  ],
+                ),
               ),
-            ),
+            // 矮窗口优先给表格留出高度，概况仍可在首页查看。
+            if (widget.showOverview && constraints.maxHeight >= 480)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                child: LoanWideOverview(
+                  viewModel: widget.viewModel,
+                  columns: 4,
+                ),
+              ),
             Expanded(
               child: Stack(
                 children: [

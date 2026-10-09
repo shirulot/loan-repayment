@@ -964,6 +964,9 @@ void main() {
 
     final monthFinder = find.text('2026年9月');
     await tester.ensureVisible(monthFinder);
+    // Lay out the new scroll offset before hit-testing above the navigation.
+    await tester.pump();
+    await tester.pumpAndSettle();
     await tester.tap(monthFinder);
     await tester.pump();
     expect(find.text('还款详情 · 2026-09'), findsNothing);

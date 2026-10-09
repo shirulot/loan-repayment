@@ -8,29 +8,34 @@ class LoanMobilePageHeader extends StatelessWidget {
     super.key,
     required this.viewModel,
     required this.onShowInfo,
+    required this.onOpenAppearance,
   });
 
   final LoanPlannerViewModel viewModel;
   final VoidCallback onShowInfo;
+  final VoidCallback onOpenAppearance;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return SizedBox(
-      height: 32,
+      height: 48,
       child: Row(
         children: [
           Icon(Icons.calculate_outlined, color: colors.primary, size: 22),
           const SizedBox(width: 8),
-          Text(
-            '提前还贷计算器',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontSize: 18,
-              fontWeight: FontWeight.w500,
-              letterSpacing: -0.4,
+          Expanded(
+            child: Text(
+              '提前还贷计算器',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+                letterSpacing: -0.4,
+              ),
             ),
           ),
-          const Spacer(),
           IconButton(
             tooltip: viewModel.amountsMasked ? '显示金额' : '隐藏金额',
             onPressed: viewModel.toggleAmountsMasked,
@@ -39,6 +44,11 @@ class LoanMobilePageHeader extends StatelessWidget {
                   ? Icons.visibility_off_outlined
                   : Icons.visibility_outlined,
             ),
+          ),
+          IconButton(
+            tooltip: '外观设置',
+            onPressed: onOpenAppearance,
+            icon: const Icon(Icons.settings_outlined),
           ),
           IconButton(
             tooltip: '使用说明',
