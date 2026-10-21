@@ -21,8 +21,11 @@ class LoanPlanConfig {
   static const defaultPrepaymentFrequencyMonths = 1;
   static const recentPrepaymentPlanningCycles = 3;
 
-  /// Number of repayment records retained independently of planning mode.
-  static const recentPrepaymentCount = 3;
+  /// 仅限制首页展示数量，历史记录仍全部保存并参与计算。
+  static const recentPrepaymentDisplayCount = 3;
+
+  /// 初次录入及旧版数据迁移提供三行。
+  static const initialRecentPrepaymentCount = recentPrepaymentDisplayCount;
   static const prepaymentFrequencyOptions = <int>[
     1,
     2,
@@ -53,6 +56,8 @@ class LoanPlanConfig {
     this.monthlyOtherExpense = 0,
     this.prepaymentFrequencyMonths = defaultPrepaymentFrequencyMonths,
     this.isPlanRepaymentMode = false,
+    this.isFixedPrepaymentMode = false,
+    this.fixedPrepaymentAmount = 0,
     this.fixedAugustPrepayment = 0,
     this.fixedSeptemberPrepayment = 0,
     this.fixedOctoberPrepayment = 0,
@@ -91,6 +96,10 @@ class LoanPlanConfig {
 
   /// Restricts planned prepayments to explicit entries or legacy expectations.
   final bool isPlanRepaymentMode;
+
+  /// 定额模式仅使用手填金额，不随收入或正常月供变化。
+  final bool isFixedPrepaymentMode;
+  final double fixedPrepaymentAmount;
   final double fixedAugustPrepayment;
   final double fixedSeptemberPrepayment;
   final double fixedOctoberPrepayment;
@@ -163,6 +172,8 @@ class LoanPlanConfig {
         defaults.prepaymentFrequencyMonths,
       ),
       isPlanRepaymentMode: json['isPlanRepaymentMode'] == true,
+      isFixedPrepaymentMode: json['isFixedPrepaymentMode'] == true,
+      fixedPrepaymentAmount: number('fixedPrepaymentAmount', 0),
       fixedAugustPrepayment: number(
         'fixedAugustPrepayment',
         defaults.fixedAugustPrepayment,
@@ -215,6 +226,8 @@ class LoanPlanConfig {
     double? monthlyOtherExpense,
     int? prepaymentFrequencyMonths,
     bool? isPlanRepaymentMode,
+    bool? isFixedPrepaymentMode,
+    double? fixedPrepaymentAmount,
     double? fixedAugustPrepayment,
     double? fixedSeptemberPrepayment,
     double? fixedOctoberPrepayment,
@@ -244,6 +257,10 @@ class LoanPlanConfig {
       prepaymentFrequencyMonths:
           prepaymentFrequencyMonths ?? this.prepaymentFrequencyMonths,
       isPlanRepaymentMode: isPlanRepaymentMode ?? this.isPlanRepaymentMode,
+      isFixedPrepaymentMode:
+          isFixedPrepaymentMode ?? this.isFixedPrepaymentMode,
+      fixedPrepaymentAmount:
+          fixedPrepaymentAmount ?? this.fixedPrepaymentAmount,
       fixedAugustPrepayment:
           fixedAugustPrepayment ?? this.fixedAugustPrepayment,
       fixedSeptemberPrepayment:
@@ -281,13 +298,15 @@ class LoanPlanConfig {
       'monthlyOtherExpense': monthlyOtherExpense,
       'prepaymentFrequencyMonths': prepaymentFrequencyMonths,
       'isPlanRepaymentMode': isPlanRepaymentMode,
+      'isFixedPrepaymentMode': isFixedPrepaymentMode,
+      'fixedPrepaymentAmount': fixedPrepaymentAmount,
       'fixedAugustPrepayment': fixedAugustPrepayment,
       'fixedSeptemberPrepayment': fixedSeptemberPrepayment,
       'fixedOctoberPrepayment': fixedOctoberPrepayment,
       'fixedAugustPrepaymentDate': fixedAugustPrepaymentDate,
       'fixedSeptemberPrepaymentDate': fixedSeptemberPrepaymentDate,
       'fixedOctoberPrepaymentDate': fixedOctoberPrepaymentDate,
-      'recentPrepayments': latestRecentPrepayments(
+      'recentPrepayments': sortedRecentPrepayments(
         recentPrepayments,
       ).map((prepayment) => prepayment.toJson()).toList(growable: false),
       'bankSeptemberPrincipal': bankSeptemberPrincipal,
@@ -313,13 +332,20 @@ class LoanPlanConfig {
     return date;
   }
 
-  /// Retains the latest repayment records, independent of planning frequency.
+  /// 按日期整理全部还款记录；新增、保存和恢复都不能隐式删除旧记录。
+  static List<RecentPrepayment> sortedRecentPrepayments(
+    Iterable<RecentPrepayment> source,
+  ) {
+    return _sortRecentPrepayments(source, ascending: true);
+  }
+
+  /// 最近三笔仅用于表单展示，禁止将这个子集写回完整记录。
   static List<RecentPrepayment> latestRecentPrepayments(
     Iterable<RecentPrepayment> source,
   ) {
     final newestFirst = _sortRecentPrepayments(source, ascending: false);
     return _sortRecentPrepayments(
-      newestFirst.take(recentPrepaymentCount),
+      newestFirst.take(recentPrepaymentDisplayCount),
       ascending: true,
     );
   }
@@ -358,7 +384,7 @@ class LoanPlanConfig {
   ) {
     final raw = json['recentPrepayments'];
     if (raw is List) {
-      return latestRecentPrepayments(
+      return sortedRecentPrepayments(
         raw.whereType<Map>().map(
           (value) =>
               RecentPrepayment.fromJson(Map<String, dynamic>.from(value)),
@@ -371,7 +397,9 @@ class LoanPlanConfig {
       return value is num ? value.toDouble() : '$value'.toDoubleOr(0);
     }
 
-    return List<RecentPrepayment>.generate(recentPrepaymentCount, (index) {
+    return List<RecentPrepayment>.generate(initialRecentPrepaymentCount, (
+      index,
+    ) {
       final amountKey = switch (index) {
         0 => 'fixedAugustPrepayment',
         1 => 'fixedSeptemberPrepayment',

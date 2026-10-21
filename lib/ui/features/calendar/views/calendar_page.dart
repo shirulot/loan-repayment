@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../../../domain/models/calendar_models.dart';
 import '../view_models/calendar_view_model.dart';
-import 'calendar_date_formatters.dart';
+import 'calendar_day_panel.dart';
+import 'calendar_layout_style.dart';
 import 'calendar_event_editor_sheet.dart';
 import 'calendar_month_grid.dart';
 import 'calendar_monthly_rules_sheet.dart';
@@ -25,6 +26,8 @@ class CalendarPage extends StatefulWidget {
 }
 
 class _CalendarPageState extends State<CalendarPage> {
+  final ScrollController _monthScrollController = ScrollController();
+  final ScrollController _dayScrollController = ScrollController();
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _scrollViewportKey = GlobalKey();
   final GlobalKey _monthHeadingKey = GlobalKey();
@@ -44,6 +47,8 @@ class _CalendarPageState extends State<CalendarPage> {
   @override
   void dispose() {
     _scrollController.dispose();
+    _monthScrollController.dispose();
+    _dayScrollController.dispose();
     super.dispose();
   }
 
@@ -77,6 +82,7 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 
   void _selectDate(DateTime date) {
+    _resetWideScroll();
     setState(() {
       _selectedDate = DateTime(date.year, date.month, date.day);
       _visibleMonth = DateTime(date.year, date.month, 1);
@@ -84,6 +90,7 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 
   void _changeMonth(int amount) {
+    _resetWideScroll();
     setState(() {
       final month = DateTime(_visibleMonth.year, _visibleMonth.month + amount);
       final day = math
@@ -92,6 +99,13 @@ class _CalendarPageState extends State<CalendarPage> {
       _visibleMonth = DateTime(month.year, month.month, 1);
       _selectedDate = DateTime(month.year, month.month, day);
     });
+  }
+
+  void _resetWideScroll() {
+    // A newly selected day/month starts at its heading; resizing alone keeps
+    // the independent pane positions and selected date unchanged.
+    if (_monthScrollController.hasClients) _monthScrollController.jumpTo(0);
+    if (_dayScrollController.hasClients) _dayScrollController.jumpTo(0);
   }
 
   Future<void> _openEditor({
@@ -215,245 +229,194 @@ class _CalendarPageState extends State<CalendarPage> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          _monthHeadingOffscreen
-              ? '${_visibleMonth.year}年${_visibleMonth.month}月'
-              : '日历',
-        ),
-        actions: [
-          TextButton.icon(
-            onPressed: _openSettings,
-            icon: const Icon(Icons.event_repeat_outlined),
-            label: const Text('扣款日'),
+  Widget _dayPanel({bool wide = false}) => CalendarDayPanel(
+    selectedDate: _selectedDate,
+    occurrences: viewModel.occurrencesOn(_selectedDate),
+    isWorkday: viewModel.isWorkdayOn(_selectedDate),
+    holidayName: viewModel.holidayNameOn(_selectedDate),
+    outlinedOccurrences: wide,
+    onAddNote: () => _openEditor(),
+    onMarkAllRead: viewModel.markAllRead,
+    onOpenOccurrence: _openOccurrence,
+    deleteAction: (occurrence) => switch (occurrence) {
+      CalendarDayOccurrence(node: final node?)
+          when node.source == CalendarNodeSource.note =>
+        () => _confirmDelete(node),
+      CalendarDayOccurrence(rule: final rule?)
+          when rule.type == CalendarMonthlyRuleType.note =>
+        () => _confirmDeleteMonthlyNote(rule),
+      _ => null,
+    },
+  );
+
+  CalendarMonthGrid _monthGrid({bool wide = false, double cellHeight = 56}) =>
+      CalendarMonthGrid(
+        monthHeadingKey: wide ? null : _monthHeadingKey,
+        month: _visibleMonth,
+        selectedDate: _selectedDate,
+        today: DateTime.now(),
+        hasEvents: viewModel.hasOccurrencesOn,
+        hasUnread: viewModel.hasUnreadOn,
+        isWorkday: viewModel.isWorkdayOn,
+        holidayName: viewModel.holidayNameOn,
+        onDateSelected: _selectDate,
+        onPreviousMonth: () => _changeMonth(-1),
+        onNextMonth: () => _changeMonth(1),
+        onToday: () => _selectDate(DateTime.now()),
+        showHeading: !wide,
+        fitMonthRows: wide,
+        cellHeight: cellHeight,
+      );
+
+  Widget _splitBody() => LayoutBuilder(
+    builder: (context, constraints) {
+      final padding = constraints.maxHeight < 400
+          ? CalendarLayoutStyle.compactPadding
+          : CalendarLayoutStyle.desktopPadding;
+      final rows = CalendarMonthGrid.weekCount(_visibleMonth);
+      // Keep touch targets usable: a short six-week month scrolls instead of
+      // shrinking dates below 44 points. Taller windows spread out the grid.
+      final cellHeight =
+          ((constraints.maxHeight -
+                      padding * 4 -
+                      CalendarLayoutStyle.weekdayHeadingHeight) /
+                  rows)
+              .clamp(
+                CalendarLayoutStyle.minimumCellHeight,
+                CalendarLayoutStyle.maximumCellHeight,
+              )
+              .toDouble();
+      return Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            maxWidth: CalendarLayoutStyle.maxWidth,
           ),
-          IconButton(
-            tooltip: '添加备注节点',
-            onPressed: () => _openEditor(),
-            icon: const Icon(Icons.add),
-          ),
-          const SizedBox(width: 4),
-        ],
-      ),
-      body: SafeArea(
-        top: false,
-        child: AnimatedBuilder(
-          animation: viewModel,
-          builder: (context, _) {
-            final occurrences = viewModel.occurrencesOn(_selectedDate);
-            final hasUnread = occurrences.any((item) => item.isUnread);
-            final holidayName = viewModel.holidayNameOn(_selectedDate);
-            return LayoutBuilder(
-              builder: (context, constraints) {
-                final horizontalPadding = constraints.maxWidth < 420
-                    ? 12.0
-                    : 20.0;
-                return SingleChildScrollView(
-                  key: _scrollViewportKey,
-                  controller: _scrollController,
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    8,
-                    horizontalPadding,
-                    28,
-                  ),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 720),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          CalendarMonthGrid(
-                            monthHeadingKey: _monthHeadingKey,
-                            month: _visibleMonth,
-                            selectedDate: _selectedDate,
-                            today: DateTime.now(),
-                            hasEvents: viewModel.hasOccurrencesOn,
-                            hasUnread: viewModel.hasUnreadOn,
-                            isWorkday: viewModel.isWorkdayOn,
-                            holidayName: viewModel.holidayNameOn,
-                            onDateSelected: _selectDate,
-                            onPreviousMonth: () => _changeMonth(-1),
-                            onNextMonth: () => _changeMonth(1),
-                            onToday: () => _selectDate(DateTime.now()),
-                          ),
-                          const SizedBox(height: 16),
-                          const Divider(height: 1),
-                          const SizedBox(height: 16),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      formatCalendarGregorianDate(
-                                        _selectedDate,
-                                      ),
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleMedium
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '${formatCalendarLunarDate(_selectedDate)}  ·  ${formatCalendarDistanceFromToday(_selectedDate, DateTime.now())}',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodyMedium
-                                          ?.copyWith(
-                                            color: colors.onSurfaceVariant,
-                                          ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '${viewModel.isWorkdayOn(_selectedDate) ? '工作日' : '休息日'}${holidayName == null ? '' : ' · $holidayName'}',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodySmall
-                                          ?.copyWith(
-                                            color: colors.onSurfaceVariant,
-                                          ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              IconButton.filledTonal(
-                                tooltip: '添加当天备注',
-                                onPressed: () => _openEditor(),
-                                icon: const Icon(Icons.add),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  occurrences.isEmpty
-                                      ? '没有日历节点'
-                                      : '${occurrences.length} 个节点',
-                                  style: Theme.of(context).textTheme.labelLarge
-                                      ?.copyWith(
-                                        color: colors.onSurfaceVariant,
-                                      ),
-                                ),
-                              ),
-                              if (hasUnread)
-                                TextButton.icon(
-                                  onPressed: viewModel.markAllRead,
-                                  icon: const Icon(Icons.done_all, size: 18),
-                                  label: const Text('全部已读'),
-                                ),
-                            ],
-                          ),
-                          if (occurrences.isEmpty)
-                            Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 24),
-                              child: Text(
-                                '点击右侧加号添加备注',
-                                textAlign: TextAlign.center,
-                                style: Theme.of(context).textTheme.bodyMedium
-                                    ?.copyWith(color: colors.onSurfaceVariant),
-                              ),
-                            )
-                          else
-                            for (
-                              var index = 0;
-                              index < occurrences.length;
-                              index++
-                            ) ...[
-                              _CalendarOccurrenceTile(
-                                occurrence: occurrences[index],
-                                onTap: () =>
-                                    _openOccurrence(occurrences[index]),
-                                onDelete: switch (occurrences[index]) {
-                                  CalendarDayOccurrence(node: final node?)
-                                      when node.source ==
-                                          CalendarNodeSource.note =>
-                                    () => _confirmDelete(node),
-                                  CalendarDayOccurrence(rule: final rule?)
-                                      when rule.type ==
-                                          CalendarMonthlyRuleType.note =>
-                                    () => _confirmDeleteMonthlyNote(rule),
-                                  _ => null,
-                                },
-                              ),
-                              if (index < occurrences.length - 1)
-                                const Divider(height: 1, indent: 48),
-                            ],
-                        ],
+          child: Padding(
+            padding: EdgeInsets.all(padding),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: Card.outlined(
+                    margin: EdgeInsets.zero,
+                    child: Scrollbar(
+                      controller: _monthScrollController,
+                      child: SingleChildScrollView(
+                        controller: _monthScrollController,
+                        padding: EdgeInsets.all(padding),
+                        child: _monthGrid(wide: true, cellHeight: cellHeight),
                       ),
                     ),
                   ),
-                );
-              },
-            );
-          },
+                ),
+                const SizedBox(width: CalendarLayoutStyle.gap),
+                Expanded(
+                  flex: 2,
+                  child: Card.outlined(
+                    margin: EdgeInsets.zero,
+                    child: Scrollbar(
+                      controller: _dayScrollController,
+                      child: SingleChildScrollView(
+                        controller: _dayScrollController,
+                        padding: EdgeInsets.all(padding),
+                        child: _dayPanel(wide: true),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
-      ),
-    );
-  }
-}
-
-class _CalendarOccurrenceTile extends StatelessWidget {
-  const _CalendarOccurrenceTile({
-    required this.occurrence,
-    required this.onTap,
-    this.onDelete,
-  });
-
-  final CalendarDayOccurrence occurrence;
-  final VoidCallback onTap;
-  final VoidCallback? onDelete;
+      );
+    },
+  );
 
   @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final amount = occurrence.amount;
-    final note = occurrence.note.trim();
-    final subtitle = <String>[
-      if (amount != null) '月供 ¥${amount.toStringAsFixed(2)}',
-      if (note.isNotEmpty) note,
-    ].join(' · ');
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Badge(
-        isLabelVisible: occurrence.isUnread,
-        smallSize: 8,
-        backgroundColor: colors.error,
-        child: Icon(
-          occurrence.rule == null
-              ? Icons.event_note_outlined
-              : Icons.event_repeat_outlined,
-          color: occurrence.isUnread ? colors.error : colors.primary,
-        ),
-      ),
-      title: Text(occurrence.title),
-      subtitle: subtitle.isEmpty ? null : Text(subtitle),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            formatCalendarTime(occurrence.dateTime),
-            style: Theme.of(context).textTheme.labelLarge,
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final wide = constraints.maxWidth >= CalendarLayoutStyle.splitMinWidth;
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(
+            wide || _monthHeadingOffscreen
+                ? '${wide ? '日历 · ' : ''}${_visibleMonth.year}年${_visibleMonth.month}月'
+                : '日历',
           ),
-          if (onDelete != null)
-            IconButton(
-              tooltip: '删除节点',
-              onPressed: onDelete,
-              icon: const Icon(Icons.delete_outline),
+          actions: [
+            if (wide) ...[
+              IconButton(
+                tooltip: '上个月',
+                onPressed: () => _changeMonth(-1),
+                icon: const Icon(Icons.chevron_left),
+              ),
+              IconButton(
+                tooltip: '下个月',
+                onPressed: () => _changeMonth(1),
+                icon: const Icon(Icons.chevron_right),
+              ),
+              IconButton(
+                tooltip: '今天',
+                onPressed: () => _selectDate(DateTime.now()),
+                icon: const Icon(Icons.today_outlined),
+              ),
+            ],
+            TextButton.icon(
+              onPressed: _openSettings,
+              icon: const Icon(Icons.event_repeat_outlined),
+              label: const Text('扣款日'),
             ),
-        ],
-      ),
-      onTap: onTap,
-    );
-  }
+            IconButton(
+              tooltip: '添加备注节点',
+              onPressed: () => _openEditor(),
+              icon: const Icon(Icons.add),
+            ),
+            const SizedBox(width: 4),
+          ],
+        ),
+        body: SafeArea(
+          top: false,
+          child: AnimatedBuilder(
+            animation: viewModel,
+            builder: (context, _) {
+              if (wide) return _splitBody();
+              return LayoutBuilder(
+                builder: (context, constraints) {
+                  final horizontalPadding = constraints.maxWidth < 420
+                      ? 12.0
+                      : 20.0;
+                  return SingleChildScrollView(
+                    key: _scrollViewportKey,
+                    controller: _scrollController,
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      8,
+                      horizontalPadding,
+                      28,
+                    ),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 720),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _monthGrid(),
+                            const SizedBox(height: 16),
+                            const Divider(height: 1),
+                            const SizedBox(height: 16),
+                            _dayPanel(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      );
+    },
+  );
 }

@@ -108,6 +108,38 @@ void main() {
       find.text('¥${formatLoanMoney(octoberRow.availableFunds)}'),
       findsOneWidget,
     );
+
+    // 使用当月与次月月供不同的数据，防止弹窗退回当月口径。
+    await tester.pumpWidget(
+      MaterialApp(home: LoanPlanPage(viewModel: viewModel)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(LoanMobileCashFlowSummary));
+    await tester.pumpAndSettle();
+    final sheet = find.byType(LoanMobileCashFlowSheet);
+    expect(sheet, findsOneWidget);
+    expect(
+      find.descendant(of: sheet, matching: find.text('次月月供')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: sheet, matching: find.text('当月月供')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: sheet,
+        matching: find.text(formatLoanMoney(octoberRow.totalPayment)),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: sheet,
+        matching: find.text(formatLoanMoney(octoberRow.availableFunds)),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('editing an amount preserves its text and caret', (tester) async {
@@ -169,17 +201,21 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('每月'), findsOneWidget);
+    expect(find.text('增量还款 · 每月'), findsOneWidget);
     await tester.tap(find.text('还款频率'));
     await tester.pumpAndSettle();
 
-    expect(find.text('选择还款频率'), findsOneWidget);
-    expect(find.text('最近三笔还款按填写的日期与金额纳入计划；其他月份按所选频率累计可供还款额。'), findsOneWidget);
-    await tester.tap(find.text('每2个月'));
+    expect(find.text('提前还款方式'), findsOneWidget);
+    expect(find.text('按所选频率累计可供还款额，已有还款记录优先。'), findsOneWidget);
+    await tester.tap(find.byType(DropdownButtonFormField<int>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('每2个月').last);
     await tester.pumpAndSettle();
 
+    await tester.tap(find.widgetWithText(FilledButton, '应用并重算').last);
+    await tester.pumpAndSettle();
     expect(viewModel.config.prepaymentFrequencyMonths, 2);
-    expect(find.text('每2个月'), findsOneWidget);
+    expect(find.text('增量还款 · 每2个月'), findsOneWidget);
     expect(find.text('最近三笔还款'), findsOneWidget);
     expect(find.text('未来3期还款预览'), findsOneWidget);
     final previewRows = tester
@@ -310,47 +346,41 @@ void main() {
     expect(viewModel.config.loanTermYears, closeTo(241 / 12, 0.000001));
   });
 
-  testWidgets('selecting planned repayment mode updates the home plan', (
+  testWidgets('fixed repayment saves manual amount and frequency', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(390, 844));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-
     final viewModel = createViewModel();
     addTearDown(viewModel.dispose);
-
     await tester.pumpWidget(
       MaterialApp(home: LoanPlanPage(viewModel: viewModel)),
     );
     await tester.pumpAndSettle();
-
     await tester.tap(find.text('还款频率'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('每4个月'));
+    await tester.tap(find.text('定额还款'));
     await tester.pumpAndSettle();
-
-    expect(viewModel.config.isPlanRepaymentMode, isFalse);
+    await tester.tap(find.byType(DropdownButtonFormField<int>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('每4个月').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, '固定还款金额'), '20000');
+    await tester.tap(find.widgetWithText(FilledButton, '应用并重算').last);
+    await tester.pumpAndSettle();
+    expect(viewModel.config.isFixedPrepaymentMode, isTrue);
+    expect(viewModel.config.fixedPrepaymentAmount, 20000);
     expect(viewModel.config.prepaymentFrequencyMonths, 4);
+    expect(find.textContaining('定额还款 · 每4个月'), findsOneWidget);
 
     await tester.tap(find.text('还款频率'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('计划还款'));
+    expect(find.widgetWithText(TextField, '20000'), findsOneWidget);
+    await tester.tap(find.text('增量还款'));
+    await tester.tap(find.widgetWithText(FilledButton, '应用并重算').last);
     await tester.pumpAndSettle();
-
-    expect(viewModel.config.isPlanRepaymentMode, isTrue);
-    expect(find.text('计划还款'), findsOneWidget);
-    final previewMonths = tester
-        .widgetList<LoanMobilePreviewRow>(find.byType(LoanMobilePreviewRow))
-        .map((row) => row.month)
-        .toList();
-    expect(previewMonths, ['月份', '2026年8月', '2026年9月', '2026年10月']);
-
-    await tester.tap(find.text('还款频率'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('每4个月'));
-    await tester.pumpAndSettle();
-
-    expect(viewModel.config.isPlanRepaymentMode, isFalse);
+    expect(viewModel.config.isFixedPrepaymentMode, isFalse);
+    expect(viewModel.config.fixedPrepaymentAmount, 20000);
     expect(viewModel.config.prepaymentFrequencyMonths, 4);
   });
 
@@ -624,7 +654,7 @@ void main() {
     },
   );
 
-  testWidgets('keeps newly added repayments in ascending date order', (
+  testWidgets('adding keeps history and shows only the latest three', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(390, 844));
@@ -675,16 +705,30 @@ void main() {
     await tester.ensureVisible(recentSection);
     await tester.tap(recentSection);
     await tester.pumpAndSettle();
-    final addButton = find.widgetWithText(OutlinedButton, '添加一笔（保留最近三笔）');
-    tester.widget<OutlinedButton>(addButton).onPressed!();
-    await tester.pumpAndSettle();
+    final addButton = find.widgetWithText(OutlinedButton, '添加一笔');
+    // 连续新增超过三笔，验证旧记录不会被窗口上限淘汰。
+    for (var index = 0; index < 2; index++) {
+      await tester.ensureVisible(addButton);
+      await tester.pumpAndSettle();
+      await tester.tap(addButton);
+      await tester.pumpAndSettle();
+    }
 
+    expect(
+      viewModel.config.recentPrepayments
+          .where(
+            (event) =>
+                ['oldest', 'future-one', 'future-two'].contains(event.id),
+          )
+          .map((event) => event.amount),
+      [1000, 2000, 3000],
+    );
     final dates = viewModel.config.recentPrepayments
         .map((event) => event.repaymentDate)
         .toList();
     final sortedDates = List<String>.from(dates)..sort();
-    expect(dates, hasLength(3));
-    expect(dates, isNot(contains('2020-01-01')));
+    expect(dates, hasLength(5));
+    expect(dates, contains('2020-01-01'));
     expect(dates, sortedDates);
 
     final visibleDates = find.byWidgetPredicate(
@@ -696,7 +740,23 @@ void main() {
     expect([
       for (var index = 0; index < visibleDates.evaluate().length; index++)
         tester.widget<TextField>(visibleDates.at(index)).controller!.text,
-    ], dates);
+    ], dates.sublist(dates.length - 3));
+
+    // 显示下标 0 已不是历史记录下标 0，删除仍只能命中选中的那一笔。
+    final removedId = LoanPlanConfig.latestRecentPrepayments(
+      viewModel.config.recentPrepayments,
+    ).first.id;
+    final deleteButton = find.widgetWithText(TextButton, '删除此笔').first;
+    await tester.ensureVisible(deleteButton);
+    await tester.pumpAndSettle();
+    await tester.tap(deleteButton);
+    await tester.pumpAndSettle();
+    expect(viewModel.config.recentPrepayments, hasLength(4));
+    expect(
+      viewModel.config.recentPrepayments.map((event) => event.id),
+      allOf(contains('oldest'), isNot(contains(removedId))),
+    );
+    expect(visibleDates, findsNWidgets(3));
   });
 
   testWidgets('preview row opens its repayment month on the second tap', (

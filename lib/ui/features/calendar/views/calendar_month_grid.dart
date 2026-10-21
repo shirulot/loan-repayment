@@ -1,4 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+
+import 'calendar_layout_style.dart';
 
 class CalendarMonthGrid extends StatelessWidget {
   const CalendarMonthGrid({
@@ -15,6 +19,9 @@ class CalendarMonthGrid extends StatelessWidget {
     required this.onNextMonth,
     required this.onToday,
     this.monthHeadingKey,
+    this.showHeading = true,
+    this.fitMonthRows = false,
+    this.cellHeight = 56,
   });
 
   final DateTime month;
@@ -29,43 +36,62 @@ class CalendarMonthGrid extends StatelessWidget {
   final VoidCallback onNextMonth;
   final VoidCallback onToday;
   final Key? monthHeadingKey;
+  final bool showHeading;
+  final bool fitMonthRows;
+  final double cellHeight;
+
+  /// Wide calendars avoid an unnecessary sixth week while retaining every
+  /// date in months that genuinely span six weeks.
+  static int weekCount(DateTime month) {
+    final offset = DateTime(month.year, month.month).weekday - DateTime.monday;
+    final days = DateTime(month.year, month.month + 1, 0).day;
+    return ((offset + days) / 7).ceil();
+  }
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final firstDay = DateTime(month.year, month.month, 1);
     final startOffset = firstDay.weekday - DateTime.monday;
+    // Enlarged accessibility text needs taller dates; the surrounding pane
+    // remains scrollable instead of clipping holiday labels or event dots.
+    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    final effectiveCellHeight = math.max(
+      cellHeight,
+      CalendarLayoutStyle.minimumCellHeight * textScale,
+    );
     return Column(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                '${month.year}年${month.month}月',
-                key: monthHeadingKey,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+        if (showHeading)
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${month.year}年${month.month}月',
+                  key: monthHeadingKey,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                ),
               ),
-            ),
-            IconButton(
-              tooltip: '今天',
-              onPressed: onToday,
-              icon: const Icon(Icons.today_outlined),
-            ),
-            IconButton(
-              tooltip: '上个月',
-              onPressed: onPreviousMonth,
-              icon: const Icon(Icons.chevron_left),
-            ),
-            IconButton(
-              tooltip: '下个月',
-              onPressed: onNextMonth,
-              icon: const Icon(Icons.chevron_right),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
+              IconButton(
+                tooltip: '今天',
+                onPressed: onToday,
+                icon: const Icon(Icons.today_outlined),
+              ),
+              IconButton(
+                tooltip: '上个月',
+                onPressed: onPreviousMonth,
+                icon: const Icon(Icons.chevron_left),
+              ),
+              IconButton(
+                tooltip: '下个月',
+                onPressed: onNextMonth,
+                icon: const Icon(Icons.chevron_right),
+              ),
+            ],
+          ),
+        if (showHeading) const SizedBox(height: 4),
         const Row(
           children: [
             _WeekdayLabel('一'),
@@ -84,10 +110,10 @@ class CalendarMonthGrid extends StatelessWidget {
             return GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              itemCount: 42,
+              itemCount: fitMonthRows ? weekCount(month) * 7 : 42,
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 7,
-                childAspectRatio: cellWidth / 56,
+                childAspectRatio: cellWidth / effectiveCellHeight,
               ),
               itemBuilder: (context, index) {
                 final day = DateTime(
@@ -269,7 +295,7 @@ class _CalendarDayCell extends StatelessWidget {
                       ),
                     ),
                     SizedBox(
-                      height: 13,
+                      height: MediaQuery.textScalerOf(context).scale(9) * 1.45,
                       child: festival == null
                           ? null
                           : Text(

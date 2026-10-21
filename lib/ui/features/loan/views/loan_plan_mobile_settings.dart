@@ -36,7 +36,7 @@ class LoanMobileSettingsGroup extends StatelessWidget {
   final ValueChanged<String> onPickRepaymentDate;
   final VoidCallback onRecentPrepaymentChanged;
   final VoidCallback onAddRecentPrepayment;
-  final ValueChanged<int> onRemoveRecentPrepayment;
+  final ValueChanged<String> onRemoveRecentPrepayment;
   final ValueChanged<String> onCorrectRecentPrepayment;
   final ValueChanged<String> onConfirmRecentPrepayment;
   final ValueChanged<String> onDurationFieldChanged;
@@ -160,7 +160,7 @@ class LoanMobileSettingsGroup extends StatelessWidget {
             TextButton.icon(
               // Settled records remain removable so the recent-repayment
               // window can be corrected after a repayment date has passed.
-              onPressed: () => onRemoveRecentPrepayment(index),
+              onPressed: () => onRemoveRecentPrepayment(event.id),
               icon: const Icon(Icons.delete_outline, size: 17),
               label: const Text('删除此笔'),
             ),
@@ -247,7 +247,7 @@ class LoanMobileSettingsGroup extends StatelessWidget {
               OutlinedButton.icon(
                 onPressed: onAddRecentPrepayment,
                 icon: const Icon(Icons.add_outlined, size: 18),
-                label: Text('添加一笔（保留最近三笔）'),
+                label: Text('添加一笔'),
               ),
             ],
           ),

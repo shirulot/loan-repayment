@@ -241,7 +241,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
       }
       return updated;
     });
-    return _latestRecentPrepayments(events);
+    return _sortedRecentPrepayments(events);
   }
 
   /// Recent transactions drive the plan directly, so they do not wait for the
@@ -287,10 +287,10 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
         ),
       ]);
     }
-    while (events.length < LoanPlanConfig.recentPrepaymentCount) {
+    while (events.length < LoanPlanConfig.initialRecentPrepaymentCount) {
       events.add(_newRecentPrepayment());
     }
-    return _latestRecentPrepayments(events);
+    return _sortedRecentPrepayments(events);
   }
 
   RecentPrepayment _newRecentPrepayment() => RecentPrepayment(
@@ -300,12 +300,12 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
 
   void _addRecentPrepayment() {
     final events = _eventsFromControllers()..add(_newRecentPrepayment());
-    final retained = _latestRecentPrepayments(events);
-    _replaceRecentPrepayments(retained);
+    // 新增只追加记录，保留原有金额、日期和实际还款状态。
+    _replaceRecentPrepayments(_sortedRecentPrepayments(events));
     _commitRecentPrepayments();
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('已加入一笔还款，日期最远的一笔已移出最近三笔记录。')));
+    ).showSnackBar(const SnackBar(content: Text('已加入一笔还款，原有记录已保留。')));
   }
 
   /// Unlocks only the selected settled event for a user-requested correction.
@@ -329,10 +329,14 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     );
   }
 
-  void _removeRecentPrepayment(int index) {
-    final removedEvent = _recentPrepayments[index];
+  void _removeRecentPrepayment(String eventId) {
+    final removedEvent = _recentPrepayments.firstWhere(
+      (event) => event.id == eventId,
+    );
     widget.onPrepaymentDeleted?.call(removedEvent.id);
-    final events = _eventsFromControllers()..removeAt(index);
+    // 展示列表只是完整记录的子集，删除必须按身份匹配，不能复用显示下标。
+    final events = _eventsFromControllers()
+      ..removeWhere((event) => event.id == eventId);
     final existingIds = events.map((event) => event.id).toSet();
     final existingPayments = events
         .map((event) => '${event.repaymentDate}-${event.amount}')
@@ -351,19 +355,19 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
         .cast<RecentPrepayment?>()
         .firstWhere((event) => event != null, orElse: () => null);
     if (replacement != null) events.add(replacement);
-    while (events.length < LoanPlanConfig.recentPrepaymentCount) {
+    while (events.length < LoanPlanConfig.initialRecentPrepaymentCount) {
       events.add(_newRecentPrepayment());
     }
-    _replaceRecentPrepayments(_latestRecentPrepayments(events));
+    _replaceRecentPrepayments(_sortedRecentPrepayments(events));
     _commitRecentPrepayments();
   }
 
   double _displayAmount(RecentPrepayment event) =>
       event.actualPrepayment ?? event.amount;
 
-  List<RecentPrepayment> _latestRecentPrepayments(
+  List<RecentPrepayment> _sortedRecentPrepayments(
     Iterable<RecentPrepayment> source,
-  ) => LoanPlanConfig.latestRecentPrepayments(source);
+  ) => LoanPlanConfig.sortedRecentPrepayments(source);
 
   void _replaceRecentPrepayments(List<RecentPrepayment> events) {
     setState(() {
@@ -421,21 +425,9 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
     final frequency = LoanPlanFrequencySelector(
-      frequencyMonths: widget.config.prepaymentFrequencyMonths,
-      isPlanRepaymentMode: widget.config.isPlanRepaymentMode,
-      onChanged: (months) {
-        widget.viewModel.updateConfig(
-          widget.viewModel.config.copyWith(
-            prepaymentFrequencyMonths: months,
-            isPlanRepaymentMode: false,
-          ),
-        );
-      },
-      onSelectPlanRepayment: () {
-        widget.viewModel.updateConfig(
-          widget.viewModel.config.copyWith(isPlanRepaymentMode: true),
-        );
-      },
+      config: widget.config,
+      amountsMasked: widget.viewModel.amountsMasked,
+      onChanged: widget.viewModel.updateConfig,
     );
     final method = LoanRepaymentMethodSelector(
       method: widget.config.repaymentMethod,
@@ -449,7 +441,10 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
       key: _settingsKey,
       config: widget.config,
       viewModel: widget.viewModel,
-      recentPrepayments: _recentPrepayments,
+      // 只截取传给界面的三笔，控制器及持久化始终保留完整记录。
+      recentPrepayments: LoanPlanConfig.latestRecentPrepayments(
+        _recentPrepayments,
+      ),
       correctingRecentPrepaymentIds: _correctingRecentPrepaymentIds,
       expandedSections: _expandedSections,
       controllerFor: _controllerFor,

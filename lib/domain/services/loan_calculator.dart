@@ -79,6 +79,11 @@ class LoanCalculator {
           (total, item) => total + item.amount,
         );
         accumulatedAvailableFunds = 0;
+      } else if (legacyActualPrepayment != null &&
+          config.isFixedPrepaymentMode) {
+        // 定额只安排预计金额，已录入的实际金额保持权威。
+        requestedPrepayment = math.max(0.0, legacyActualPrepayment);
+        accumulatedAvailableFunds = 0;
       } else if (legacyActualPrepayment != null) {
         // Legacy month-keyed actual records remain authoritative during the
         // transition to event-based recent repayment data.
@@ -93,6 +98,11 @@ class LoanCalculator {
             ? math.max(0.0, legacyActualPrepayment)
             : math.max(0.0, availableFunds);
         accumulatedAvailableFunds = 0;
+      } else if (config.isFixedPrepaymentMode) {
+        // 每个周期使用同一笔手填金额，不累加现金流，也不倍乘间隔月数。
+        requestedPrepayment = isPlanningMonth
+            ? math.max(0.0, config.fixedPrepaymentAmount)
+            : 0.0;
       } else {
         final isCurrentOrFutureMonth = !_isBeforeCalculationMonth(month);
         if (isCurrentOrFutureMonth && !config.isPlanRepaymentMode) {
@@ -119,9 +129,10 @@ class LoanCalculator {
       final remainingAfterNormalPayment =
           math.max(0.0, commercialOpening - commercialPrincipal).toDouble() +
           math.max(0.0, providentOpening - providentPrincipal).toDouble();
-      // 预约金额始终按“向上取整到十元”展示；真正使用的金额仍会在下方
-      // 按剩余本金封顶，避免最后一笔出现负余额。
-      final expectedPrepayment = scheduledPrepayments.isNotEmpty
+      // 自动增量按十元向上取整；手填定额和还款记录保留原金额。
+      // 各模式均按剩余本金封顶，避免最后一笔出现负余额。
+      final expectedPrepayment =
+          scheduledPrepayments.isNotEmpty || config.isFixedPrepaymentMode
           ? math
                 .min(requestedPrepayment, remainingAfterNormalPayment)
                 .toDouble()
@@ -153,7 +164,7 @@ class LoanCalculator {
               ),
             ];
       final hasMultiplePrepayments = prepayments.length > 1;
-      // 多笔同月交易时，唯一一次月供要延后到第一笔提前还款之后重新计算。
+      // 同月多笔由第一笔明细扣除唯一一次当期月供，避免月度行重复扣款。
       final normalPaymentAppliedInPlanRow =
           !isCalibrationMonth && !hasMultiplePrepayments;
       final appliedPrepayments = _applyPrepayments(
@@ -534,10 +545,6 @@ class LoanCalculator {
     // Same-month previews describe the same upcoming instalment, so they
     // must retain one shared term count until the next calendar month.
     final previewRemainingTerms = remainingTermsForAdditionalPayment;
-    final previewPaymentMonth = _monthAt(
-      LoanPlanConfig.parseLoanStartDate('$paymentMonthStart-01')!,
-      1,
-    );
     final dates = <String>[];
     final details = <LoanPrepaymentDetail>[];
 
@@ -552,7 +559,9 @@ class LoanCalculator {
           commercialOpening: previewCommercial,
           providentOpening: previewProvident,
           remainingTerms: previewRemainingTerms,
-          paymentMonth: previewPaymentMonth,
+          // 同月明细与月度行属于同一期月供，均按上一自然月日数计息。
+          // 不能传入下一月，否则 11 月会误用 11 月的 30 天，而非 10 月的 31 天。
+          paymentMonth: paymentMonthStart,
           config: config,
         );
         if (index == 0) {

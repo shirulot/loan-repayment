@@ -21,6 +21,7 @@ class LoanPlanDetailPage extends StatefulWidget {
     this.initialMonth,
     this.onViewParameters,
     this.showOverview = false,
+    this.active = true,
   });
 
   final LoanPlannerViewModel viewModel;
@@ -29,6 +30,7 @@ class LoanPlanDetailPage extends StatefulWidget {
   // 仅在表格无法与参数并排时提供抽屉入口。
   final VoidCallback? onViewParameters;
   final bool showOverview;
+  final bool active;
 
   @override
   State<LoanPlanDetailPage> createState() => _LoanPlanDetailPageState();
@@ -45,6 +47,7 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
   final _visibleColumns = <LoanPlanColumnKey>{...defaultLoanPlanVisibleColumns};
   var _columnSettingsRevision = 0;
   String? _highlightedMonth;
+  Widget? _retainedContent;
 
   @override
   void initState() {
@@ -227,9 +230,14 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
     return ListenableBuilder(
       listenable: widget.viewModel,
       builder: (context, _) {
+        // 已访问的隐藏表格保留现有视图，返回前再读取最新数据；避免保存收入时
+        // 仍为不可见的数千个单元格创建新 Widget。首次构建仍正常完成。
+        if (!widget.active && _retainedContent != null) {
+          return _retainedContent!;
+        }
         final content = _buildContent(context);
-        if (widget.embedded) return content;
-        return Scaffold(
+        if (widget.embedded) return _retainedContent = content;
+        return _retainedContent = Scaffold(
           appBar: AppBar(
             title: const Text('还款计划详情'),
             actions: [

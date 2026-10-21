@@ -349,12 +349,14 @@ void main() {
     );
   });
 
-  test('restores only the latest three repayment records at any frequency', () {
+  test('cache and backup round trips preserve all repayment records', () {
     final records = List<RecentPrepayment>.generate(
       5,
       (index) => RecentPrepayment(
         id: 'repayment-$index',
-        amount: 1000,
+        amount: 1000 + index.toDouble(),
+        actualPrepayment: index == 0 ? 900 : null,
+        isSettled: index == 0,
         repaymentDate: '2026-09-${(index + 1).toString().padLeft(2, '0')}',
       ),
     );
@@ -364,10 +366,21 @@ void main() {
     });
 
     expect(restored.recentPrepayments.map((record) => record.id).toList(), [
+      'repayment-0',
+      'repayment-1',
       'repayment-2',
       'repayment-3',
       'repayment-4',
     ]);
+    // 缓存与备份共用该序列化入口，反复往返也必须保留实际还款状态。
+    var state = LoanCachedState(config: restored, actualPrepayments: {});
+    for (var index = 0; index < 2; index++) {
+      state = LoanCachedState.fromJson(state.toJson());
+      expect(
+        state.config.recentPrepayments.map((event) => event.toJson()).toList(),
+        records.map((event) => event.toJson()).toList(),
+      );
+    }
   });
 
   test('restores parameters and actual repayments from a JSON backup', () {
@@ -564,6 +577,65 @@ void main() {
       );
       expect(rows[2].expectedPrepayment, greaterThan(rows[2].availableFunds));
       expect(rows[3].expectedPrepayment, 0);
+    },
+  );
+
+  test(
+    'fixed prepayment stays manual across income changes and cache restore',
+    () {
+      const fixed = LoanPlanConfig(
+        commercialOpeningBalance: 500000,
+        remainingTerms: 200,
+        commercialAnnualRate: 0.03,
+        isFixedPrepaymentMode: true,
+        fixedPrepaymentAmount: 20000.25,
+        prepaymentFrequencyMonths: 3,
+      );
+      final restored = LoanPlanConfig.fromJson(fixed.toJson());
+      expect(restored.isFixedPrepaymentMode, isTrue);
+      expect(restored.fixedPrepaymentAmount, 20000.25);
+      for (final salary in [0.0, 50000.0]) {
+        final rows = calculator.calculate(
+          restored.copyWith(monthlySalary: salary),
+          {},
+        );
+        expect(rows[0].expectedPrepayment, 20000.25);
+        expect(rows[1].expectedPrepayment, 0);
+        expect(rows[2].expectedPrepayment, 0);
+        expect(rows[3].expectedPrepayment, 20000.25);
+      }
+      final monthly = calculator.calculate(
+        fixed.copyWith(prepaymentFrequencyMonths: 1),
+        {},
+      );
+      expect(
+        monthly.take(4).every((row) => row.expectedPrepayment == 20000.25),
+        isTrue,
+      );
+      expect(monthly.last.commercialClosing, 0);
+      expect(monthly.last.expectedPrepayment, lessThan(20000.25));
+      final actual = calculator.calculate(fixed, {'2026-08': 1234});
+      expect(actual.first.expectedPrepayment, 1234);
+      final dated = calculator.calculate(
+        fixed.copyWith(
+          recentPrepayments: const [
+            RecentPrepayment(
+              id: 'manual',
+              amount: 5000,
+              repaymentDate: '2026-09-15',
+            ),
+          ],
+        ),
+        {},
+      );
+      expect(
+        dated.firstWhere((row) => row.month == '2026-09').expectedPrepayment,
+        5000,
+      );
+      expect(
+        dated.firstWhere((row) => row.month == '2026-11').expectedPrepayment,
+        20000.25,
+      );
     },
   );
 
@@ -922,7 +994,11 @@ void main() {
     // is recalculated after prior prepayments and before its own prepayment.
     expect(september.commercialPrincipal, closeTo(10000 / 12, 0.001));
     expect(first.commercialPrincipalBefore, closeTo(10000 / 12, 0.001));
-    expect(first.commercialPaymentBefore, closeTo(1137.5, 0.001));
+    // 9 月月供对应 8 月的 31 天；拆成多笔不能改用 9 月的 30 天。
+    expect(
+      first.commercialPaymentBefore,
+      closeTo(10000 / 12 + 10000 * 0.365 / 360 * 31, 0.001),
+    );
     expect(second.commercialPrincipalBefore, closeTo(9000 / 12, 0.001));
     expect(
       second.commercialPaymentBefore,

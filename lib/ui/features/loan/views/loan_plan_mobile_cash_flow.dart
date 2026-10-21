@@ -188,7 +188,7 @@ class _LoanMobileCashMetric extends StatelessWidget {
   }
 }
 
-/// Bottom-sheet editor for the monthly cash-flow values.
+/// 编辑弹窗与顶部摘要统一按次月月供估算可供提前还贷额。
 class LoanMobileCashFlowSheet extends StatelessWidget {
   const LoanMobileCashFlowSheet({
     super.key,
@@ -254,8 +254,8 @@ class LoanMobileCashFlowSheet extends StatelessWidget {
               amountsMasked: viewModel.amountsMasked,
             ),
             LoanMobileReadonlyField(
-              label: '当月月供',
-              value: _money(viewModel.currentMonthlyPayment),
+              label: '次月月供',
+              value: _money(viewModel.nextMonthlyPayment),
               suffix: '元',
               amountsMasked: viewModel.amountsMasked,
             ),
@@ -275,7 +275,7 @@ class LoanMobileCashFlowSheet extends StatelessWidget {
             ),
             LoanMobileReadonlyField(
               label: '可供提前还贷额',
-              value: _money(viewModel.currentAvailablePrepayment),
+              value: _money(viewModel.nextMonthAvailablePrepayment),
               suffix: '元',
               highlight: true,
               amountsMasked: viewModel.amountsMasked,

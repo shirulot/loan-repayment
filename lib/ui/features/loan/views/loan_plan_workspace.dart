@@ -86,6 +86,7 @@ class _LoanPlanWorkspaceState extends State<LoanPlanWorkspace> {
                       child: LoanPlanDetailPage(
                         viewModel: widget.viewModel,
                         embedded: true,
+                        active: widget.active,
                         initialMonth: widget.initialMonth,
                         showOverview: sidebar,
                         onViewParameters:

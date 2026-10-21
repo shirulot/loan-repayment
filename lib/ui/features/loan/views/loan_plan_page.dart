@@ -4,9 +4,9 @@ import '../../calendar/view_models/calendar_view_model.dart';
 import '../../calendar/views/calendar_page.dart';
 import '../view_models/loan_planner_view_model.dart';
 import 'loan_plan_workspace.dart';
+import 'loan_plan_retained_tab.dart';
 import 'loan_calculator_page.dart';
 import 'loan_plan_mobile_layout.dart';
-import 'loan_plan_layout_style.dart';
 import 'loan_plan_mobile_navigation.dart';
 import 'loan_month_detail_page.dart';
 import '../../settings/views/app_appearance_settings_sheet.dart';
@@ -32,6 +32,7 @@ class LoanPlanPage extends StatefulWidget {
 class _LoanPlanPageState extends State<LoanPlanPage>
     with WidgetsBindingObserver {
   var _selectedTabIndex = 0;
+  final _tabController = PageController();
   String? _pendingDetailMonth;
   DateTime? _calendarInitialDate;
 
@@ -81,6 +82,7 @@ class _LoanPlanPageState extends State<LoanPlanPage>
       _selectedTabIndex = 3;
       _calendarInitialDate = date;
     });
+    _tabController.jumpToPage(3);
   }
 
   void _openAppearanceSettings() {
@@ -97,6 +99,7 @@ class _LoanPlanPageState extends State<LoanPlanPage>
 
   @override
   void dispose() {
+    _tabController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     widget.calendarViewModel?.removeListener(_onCalendarChanged);
     super.dispose();
@@ -122,6 +125,7 @@ class _LoanPlanPageState extends State<LoanPlanPage>
       _selectedTabIndex = 1;
       _pendingDetailMonth = month;
     });
+    _tabController.jumpToPage(1);
   }
 
   void _selectTab(int index) {
@@ -129,6 +133,7 @@ class _LoanPlanPageState extends State<LoanPlanPage>
       _selectedTabIndex = index;
       _pendingDetailMonth = null;
     });
+    _tabController.jumpToPage(index);
   }
 
   void _showMobileInfo() {
@@ -164,11 +169,10 @@ class _LoanPlanPageState extends State<LoanPlanPage>
             calendarUnreadCount: widget.calendarViewModel?.unreadCount,
           ),
           body: SafeArea(
-            // Keep the same subtree across window resizes so tab selection,
-            // unfinished form edits and calculator state remain intact.
-            child: IndexedStack(
-              index: _selectedTabIndex,
-              alignment: Alignment.topCenter,
+            // 隐藏页保留状态但退出布局，避免键盘变化反复布局整张还款表。
+            child: PageView(
+              controller: _tabController,
+              physics: const NeverScrollableScrollPhysics(),
               children: [
                 MobileLoanPlanLayout(
                   viewModel: viewModel,
@@ -187,40 +191,17 @@ class _LoanPlanPageState extends State<LoanPlanPage>
                   onPrepaymentDeleted:
                       widget.calendarViewModel?.removeLinkedPrepayment,
                 ),
-                _LoanCompactSurface(
-                  child: LoanCalculatorPage(viewModel: viewModel),
-                ),
+                LoanCalculatorPage(viewModel: viewModel),
                 if (widget.calendarViewModel != null)
                   CalendarPage(
                     viewModel: widget.calendarViewModel!,
                     initialSelectedDate: _calendarInitialDate,
                   ),
-              ],
+              ].map((page) => LoanPlanRetainedTab(child: page)).toList(),
             ),
           ),
         );
       },
-    );
-  }
-}
-
-/// Preserve the phone layout's readable proportions in a resizable window;
-/// the repayment table and calendar retain their own wide-screen layouts.
-class _LoanCompactSurface extends StatelessWidget {
-  const _LoanCompactSurface({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: LoanPlanLayoutStyle.maxCompactWidth,
-        ),
-        child: child,
-      ),
     );
   }
 }

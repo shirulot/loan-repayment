@@ -201,7 +201,7 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
             ),
             const SizedBox(height: 5),
             Text(
-              '贷款总年数与剩余期数可双向调整；修改剩余期数会按当前月份反算总年数。蓝色字段可编辑。最近三笔还款按录入金额和日期纳入计划。',
+              '贷款总年数与剩余期数可双向调整；修改剩余期数会按当前月份反算总年数。蓝色字段可编辑。还款记录按录入金额和日期纳入计划。',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 13),
