@@ -11,6 +11,7 @@ class LoanMobileInputField extends StatelessWidget {
     required this.suffix,
     this.integer = false,
     this.date = false,
+    this.datePickerTooltip = '选择还贷日期',
     this.enabled = true,
     this.amountsMasked = false,
     this.onChanged,
@@ -23,6 +24,7 @@ class LoanMobileInputField extends StatelessWidget {
   final String suffix;
   final bool integer;
   final bool date;
+  final String datePickerTooltip;
   final bool enabled;
   final bool amountsMasked;
   final ValueChanged<String>? onChanged;
@@ -66,7 +68,7 @@ class LoanMobileInputField extends StatelessWidget {
           hintText: date ? 'YYYY-MM-DD' : null,
           suffixIcon: date
               ? IconButton(
-                  tooltip: '选择还贷日期',
+                  tooltip: datePickerTooltip,
                   onPressed: fieldEnabled ? onPickDate : null,
                   icon: const Icon(Icons.calendar_month_outlined),
                 )

@@ -6,6 +6,7 @@ import 'package:lunar/lunar.dart';
 
 import '../../../../data/services/loan_cache_service.dart';
 import '../../../../domain/models/loan_models.dart';
+import '../../../../domain/models/loan_payment_history.dart';
 import '../../../../domain/services/loan_calculator.dart';
 
 /// A numeric calculator reference that may retain its source expression.
@@ -42,6 +43,8 @@ class LoanPlannerViewModel extends ChangeNotifier {
   final LoanCacheService _cacheService;
   LoanPlanConfig _config;
   final Map<String, double?> _actualPrepayments = <String, double?>{};
+  List<LoanPaymentHistory> _paymentHistory = const [];
+  LoanInitialBalance? _recordedInitialBalance;
   List<LoanPlanRow> _rows = const <LoanPlanRow>[];
   Future<void> _pendingSave = Future<void>.value();
   bool _amountsMasked = false;
@@ -50,9 +53,28 @@ class LoanPlannerViewModel extends ChangeNotifier {
   var _calculatorExpression = '';
 
   LoanPlanConfig get config => _config;
-  List<LoanPlanRow> get rows => List.unmodifiable(_rows);
+  List<LoanPlanRow> get rows => _rows;
   Map<String, double?> get actualPrepayments =>
       Map.unmodifiable(_actualPrepayments);
+  List<LoanPaymentHistory> get paymentHistory => _paymentHistory;
+
+  /// 设置页展示和预测同源的最近账单结算余额。
+  LoanPlanRow? get latestArchivedRow =>
+      _rows.where((row) => row.isArchived).lastOrNull;
+
+  /// 已确认或手动保存的初期贷款信息，单独随备份保存。
+  LoanInitialBalance? get recordedInitialBalance => _recordedInitialBalance;
+
+  /// 兼容尚未保存初期信息的旧计划，沿用原有显示金额。
+  LoanInitialBalance get initialBalance =>
+      _recordedInitialBalance ??
+      LoanInitialBalance(
+        commercial: _config.commercialOpeningBalance,
+        provident: _config.providentOpeningBalance,
+      );
+
+  /// 首页、计划表和日历共同使用已按账单期末余额接续的还款计划。
+  List<LoanPlanRow> get planRows => _rows;
 
   /// 仅用于当前界面展示，避免将隐私显示偏好写入贷款数据缓存。
   bool get amountsMasked => _amountsMasked;
@@ -116,7 +138,9 @@ class LoanPlannerViewModel extends ChangeNotifier {
   double get currentMonthlyPayment {
     final current = _currentPlanRow;
     // 首行仅校准当前余额时，首页仍展示紧随其后的首笔银行月供。
-    if (current != null && identical(current, _rows.first)) {
+    if (current != null &&
+        !current.isArchived &&
+        identical(current, _rows.first)) {
       return _nextPlanRow?.totalPayment ?? current.totalPayment;
     }
     return current?.totalPayment ?? 0;
@@ -139,6 +163,13 @@ class LoanPlannerViewModel extends ChangeNotifier {
   /// Uses the same normal-payment row as [currentMonthlyPayment].
   double get currentAvailablePrepayment {
     final current = _currentPlanRow;
+    if (current?.isArchived == true) {
+      return _config.monthlySalary -
+          current!.totalPayment -
+          _config.monthlyLivingCost +
+          _config.monthlyExtraIncome -
+          _config.monthlyOtherExpense;
+    }
     if (current != null && !identical(current, _rows.first)) {
       return current.availableFunds;
     }
@@ -169,9 +200,15 @@ class LoanPlannerViewModel extends ChangeNotifier {
         _config.providentOpeningBalance,
       );
     }
-    var commercial = currentRow.commercialOpening;
-    var provident = currentRow.providentOpening;
-    var normalPaymentApplied = false;
+    if (currentRow.isArchived) {
+      return (currentRow.commercialClosing, currentRow.providentClosing);
+    }
+    var commercial =
+        currentRow.commercialOpening - currentRow.commercialPrincipal;
+    var provident = currentRow.providentOpening - currentRow.providentPrincipal;
+    // 校准首月可能只有第一笔多次提前还款明细含有正常月供。
+    var normalPaymentApplied =
+        currentRow.commercialPrincipal > 0 || currentRow.providentPrincipal > 0;
 
     final today = _calculator.calculationDate;
     for (final detail in currentRow.prepaymentDetails) {
@@ -275,6 +312,7 @@ class LoanPlannerViewModel extends ChangeNotifier {
 
   /// Numeric values shown on the home page, plus its expandable parameters.
   List<CalculatorReference> get calculatorReferences {
+    final opening = initialBalance;
     return List.unmodifiable([
       CalculatorReference(
         label: '本月收入',
@@ -314,20 +352,14 @@ class LoanPlannerViewModel extends ChangeNotifier {
       ),
       CalculatorReference(label: '当前商贷余额', value: currentCommercialBalance),
       CalculatorReference(label: '当前公积金余额', value: currentProvidentBalance),
+      CalculatorReference(label: '初期商贷本金', value: opening.commercial),
+      CalculatorReference(label: '初期公积金本金', value: opening.provident),
       CalculatorReference(
-        label: '初期商贷本金',
-        value: _config.commercialOpeningBalance,
-      ),
-      CalculatorReference(
-        label: '初期公积金本金',
-        value: _config.providentOpeningBalance,
-      ),
-      CalculatorReference(
-        label: '商贷年利率',
+        label: '当前商贷年利率',
         value: _config.commercialAnnualRate * 100,
       ),
       CalculatorReference(
-        label: '公积金年利率',
+        label: '当前公积金年利率',
         value: _config.providentAnnualRate * 100,
       ),
       CalculatorReference(
@@ -382,9 +414,14 @@ class LoanPlannerViewModel extends ChangeNotifier {
       add('公积金减少', row.providentReduction);
       add('月供合计', row.totalPayment);
       add('总额减少', row.totalReduction);
-      add('预期提前', row.expectedPrepayment);
+      add(
+        row.expectedPrepaymentFromActual ? '预期提前（实还回填）' : '预期提前',
+        row.expectedPrepayment,
+      );
       add('实际提前', row.actualPrepayment);
-      add('当日提前利息', row.prepaymentInterestDueNow);
+      if (row.prepaymentInterestRecorded) {
+        add('当日提前利息', row.prepaymentInterestDueNow);
+      }
       add('转息前月供', row.nextMonthBasePayment);
       add('转息差额', row.transferDifference);
       add('转息前月供减少', row.nextMonthBasePaymentReduction);
@@ -475,6 +512,8 @@ class LoanPlannerViewModel extends ChangeNotifier {
         _actualPrepayments
           ..clear()
           ..addAll(cachedState.actualPrepayments);
+        _paymentHistory = _mergedPaymentHistory(cachedState.paymentHistory);
+        _recordedInitialBalance = cachedState.recordedInitialBalance;
         _calculatorExpression = cachedState.calculatorExpression;
         _restoreTemporaryCalculatorResults(
           cachedState.temporaryCalculatorResults,
@@ -497,7 +536,11 @@ class LoanPlannerViewModel extends ChangeNotifier {
     _persist();
   }
 
-  void updateConfig(LoanPlanConfig config) {
+  void updateConfig(
+    LoanPlanConfig config, {
+    LoanInitialBalance? initialBalance,
+  }) {
+    _recordedInitialBalance = initialBalance ?? _recordedInitialBalance;
     _config = config;
     _recalculate();
     _persist();
@@ -524,7 +567,7 @@ class LoanPlannerViewModel extends ChangeNotifier {
   }
 
   /// Applies a user-selected backup and persists it as the new local state.
-  void restoreImportedState(LoanCachedState state) {
+  Future<void> restoreImportedState(LoanCachedState state) {
     _config = state.config;
     _actualPrepayments
       ..clear()
@@ -535,7 +578,53 @@ class LoanPlannerViewModel extends ChangeNotifier {
       state.temporaryCalculatorExpressions,
     );
     _recalculate();
-    _persist();
+    // 旧版备份没有历史字段，按月合并时保留本机已有账单。
+    return mergePaymentHistory(
+      state.paymentHistory,
+      recordedInitialBalance: state.recordedInitialBalance,
+    );
+  }
+
+  /// 预览导入合并后最早账单的初期本金，供确认弹窗比较。
+  LoanInitialBalance? previewHistoryOpening(List<LoanPaymentHistory> records) {
+    final first = _mergedPaymentHistory(records).firstOrNull;
+    return first == null ? null : LoanInitialBalance.fromRecord(first);
+  }
+
+  bool changesInitialPrincipal(LoanInitialBalance proposed) {
+    final current = initialBalance;
+    return (proposed.commercial - current.commercial).abs() >= 0.005 ||
+        (proposed.provident - current.provident).abs() >= 0.005;
+  }
+
+  /// 保存成功后从账单余额重新推算，让订阅同一计划的页面一起更新。
+  Future<void> mergePaymentHistory(
+    List<LoanPaymentHistory> records, {
+    LoanInitialBalance? recordedInitialBalance,
+  }) {
+    return _enqueueSave(() async {
+      final merged = _mergedPaymentHistory(records);
+      await _saveState(
+        paymentHistory: merged,
+        recordedInitialBalance: recordedInitialBalance,
+      );
+      _paymentHistory = merged;
+      _recordedInitialBalance =
+          recordedInitialBalance ?? _recordedInitialBalance;
+      _recalculate();
+    });
+  }
+
+  List<LoanPaymentHistory> _mergedPaymentHistory(
+    List<LoanPaymentHistory> records,
+  ) {
+    final byMonth = {
+      for (final record in _paymentHistory) record.month: record,
+      for (final record in records) record.month: record,
+    };
+    final ordered = byMonth.values.toList()
+      ..sort((a, b) => a.month.compareTo(b.month));
+    return List.unmodifiable(ordered);
   }
 
   /// 在首页与计划详情间共享金额脱敏状态。
@@ -545,7 +634,28 @@ class LoanPlannerViewModel extends ChangeNotifier {
   }
 
   void _recalculate() {
-    _rows = _calculator.calculate(_config, _actualPrepayments);
+    final archived = <LoanPlanRow>[];
+    for (final record in _paymentHistory) {
+      final date = DateTime.parse('${record.month}-01');
+      final previousMonth = DateTime(
+        date.year,
+        date.month,
+        0,
+      ).toIso8601String().substring(0, 7);
+      final previous = archived.lastOrNull;
+      archived.add(
+        record.toPlanRow(
+          previous: previous?.month == previousMonth ? previous : null,
+        ),
+      );
+    }
+    _rows = List.unmodifiable(
+      _calculator.calculate(
+        _config,
+        _actualPrepayments,
+        archivedMonths: archived,
+      ),
+    );
     notifyListeners();
   }
 
@@ -571,29 +681,33 @@ class LoanPlannerViewModel extends ChangeNotifier {
   }
 
   void _persist() {
-    final config = _config;
-    final actualPrepayments = Map<String, double?>.from(_actualPrepayments);
-    final calculatorExpression = _calculatorExpression;
-    final temporaryCalculatorResults = _temporaryCalculatorReferences
-        .map((reference) => reference.value)
-        .toList(growable: false);
-    final temporaryCalculatorExpressions = _temporaryCalculatorReferences
-        .map((reference) => reference.expression)
-        .toList(growable: false);
-    // Queue writes so rapid edits cannot finish out of order and restore stale data.
-    _pendingSave = _pendingSave.then((_) async {
-      try {
-        await _cacheService.save(
-          config,
-          actualPrepayments,
-          calculatorExpression: calculatorExpression,
-          temporaryCalculatorResults: temporaryCalculatorResults,
-          temporaryCalculatorExpressions: temporaryCalculatorExpressions,
-        );
-      } catch (_) {
-        // A cache failure must not interrupt editing or calculation.
-      }
-    });
-    unawaited(_pendingSave);
+    unawaited(_enqueueSave(_saveState));
+  }
+
+  Future<void> _enqueueSave(Future<void> Function() save) {
+    // Take the snapshot when its turn arrives so plan edits and imports
+    // always build on the latest history committed by the previous save.
+    final result = _pendingSave.then((_) => save());
+    _pendingSave = result.then<void>((_) {}, onError: (Object _) {});
+    return result;
+  }
+
+  Future<void> _saveState({
+    List<LoanPaymentHistory>? paymentHistory,
+    LoanInitialBalance? recordedInitialBalance,
+  }) {
+    return _cacheService.save(
+      _config,
+      Map<String, double?>.of(_actualPrepayments),
+      paymentHistory: paymentHistory ?? _paymentHistory,
+      recordedInitialBalance: recordedInitialBalance ?? _recordedInitialBalance,
+      calculatorExpression: _calculatorExpression,
+      temporaryCalculatorResults: _temporaryCalculatorReferences
+          .map((reference) => reference.value)
+          .toList(growable: false),
+      temporaryCalculatorExpressions: _temporaryCalculatorReferences
+          .map((reference) => reference.expression)
+          .toList(growable: false),
+    );
   }
 }

@@ -4,7 +4,10 @@ import '../../../../domain/models/loan_models.dart';
 import 'loan_plan_formatters.dart';
 import 'loan_plan_mobile_fields.dart';
 
-/// 首页提前还款设置；弹窗确认后才保存频率与手填定额。
+/// 提前还款模式与参数共同确认；手动模式不要求预设周期或金额。
+enum _PrepaymentMode { incremental, fixed, manual }
+
+/// 首页提前还款设置，沿用配置中的旧计划模式存储手动模式。
 class LoanPlanFrequencySelector extends StatelessWidget {
   const LoanPlanFrequencySelector({
     super.key,
@@ -44,7 +47,7 @@ class LoanPlanFrequencySelector extends StatelessWidget {
           config.isFixedPrepaymentMode
               ? '定额还款 · $frequency ${formatLoanMoneyProtected(config.fixedPrepaymentAmount, masked: amountsMasked)} 元'
               : config.isPlanRepaymentMode
-              ? '仅按已录入还款记录安排'
+              ? '手动还款 · 仅按录入记录计算'
               : '增量还款 · $frequency',
         ),
         trailing: const Icon(Icons.chevron_right),
@@ -70,8 +73,14 @@ class _LoanPlanFrequencySheet extends StatefulWidget {
 }
 
 class _LoanPlanFrequencySheetState extends State<_LoanPlanFrequencySheet> {
-  late bool _fixed =
-      widget.config.isFixedPrepaymentMode || widget.config.isPlanRepaymentMode;
+  late _PrepaymentMode _mode = widget.config.isFixedPrepaymentMode
+      ? _PrepaymentMode.fixed
+      : widget.config.isPlanRepaymentMode
+      ? _PrepaymentMode.manual
+      : _PrepaymentMode.incremental;
+
+  bool get _fixed => _mode == _PrepaymentMode.fixed;
+  bool get _manual => _mode == _PrepaymentMode.manual;
   late int _months = widget.config.prepaymentFrequencyMonths;
   late final _amount = TextEditingController(
     text: formatLoanEditableNumber(widget.config.fixedPrepaymentAmount),
@@ -94,7 +103,7 @@ class _LoanPlanFrequencySheetState extends State<_LoanPlanFrequencySheet> {
     }
     Navigator.of(context).pop(
       widget.config.copyWith(
-        isPlanRepaymentMode: false,
+        isPlanRepaymentMode: _manual,
         isFixedPrepaymentMode: _fixed,
         prepaymentFrequencyMonths: _months,
         fixedPrepaymentAmount: _fixed
@@ -123,35 +132,47 @@ class _LoanPlanFrequencySheetState extends State<_LoanPlanFrequencySheet> {
             children: [
               Text('提前还款方式', style: theme.textTheme.titleLarge),
               const SizedBox(height: 16),
-              SegmentedButton<bool>(
+              SegmentedButton<_PrepaymentMode>(
+                showSelectedIcon: false,
                 segments: const [
-                  ButtonSegment(value: false, label: Text('增量还款')),
-                  ButtonSegment(value: true, label: Text('定额还款')),
+                  ButtonSegment(
+                    value: _PrepaymentMode.incremental,
+                    label: Text('增量还款'),
+                  ),
+                  ButtonSegment(
+                    value: _PrepaymentMode.fixed,
+                    label: Text('定额还款'),
+                  ),
+                  ButtonSegment(
+                    value: _PrepaymentMode.manual,
+                    label: Text('手动还款'),
+                  ),
                 ],
-                selected: {_fixed},
+                selected: {_mode},
                 onSelectionChanged: (values) => setState(() {
-                  _fixed = values.single;
+                  _mode = values.single;
                   _error = null;
                 }),
               ),
               const SizedBox(height: 16),
-              DropdownButtonFormField<int>(
-                initialValue: _months,
-                decoration: const InputDecoration(labelText: '还款频率'),
-                items: [
-                  for (final months
-                      in LoanPlanConfig.prepaymentFrequencyOptions)
-                    DropdownMenuItem(
-                      value: months,
-                      child: Text(
-                        LoanPlanFrequencySelector.frequencyLabel(months),
+              if (!_manual)
+                DropdownButtonFormField<int>(
+                  initialValue: _months,
+                  decoration: const InputDecoration(labelText: '还款频率'),
+                  items: [
+                    for (final months
+                        in LoanPlanConfig.prepaymentFrequencyOptions)
+                      DropdownMenuItem(
+                        value: months,
+                        child: Text(
+                          LoanPlanFrequencySelector.frequencyLabel(months),
+                        ),
                       ),
-                    ),
-                ],
-                onChanged: (value) {
-                  if (value != null) setState(() => _months = value);
-                },
-              ),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) setState(() => _months = value);
+                  },
+                ),
               if (_fixed) ...[
                 const SizedBox(height: 8),
                 LoanMobileInputField(
@@ -169,7 +190,9 @@ class _LoanPlanFrequencySheetState extends State<_LoanPlanFrequencySheet> {
               ],
               const SizedBox(height: 12),
               Text(
-                _fixed
+                _manual
+                    ? '不预设金额、日期或频率；仅按录入的提前还款记录计算，其余月份只还正常月供。'
+                    : _fixed
                     ? '每个周期按手填金额安排预计提前还款，正常月供另算；不会用计算出的可供还款额覆盖。已有还款记录优先，最后一笔以剩余本金为限。'
                     : '按所选频率累计可供还款额，已有还款记录优先。',
                 style: theme.textTheme.bodySmall,

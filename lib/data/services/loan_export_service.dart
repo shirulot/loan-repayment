@@ -3,8 +3,9 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
-import 'loan_cache_service.dart';
 import '../../domain/models/loan_models.dart';
+import '../../domain/models/loan_payment_history.dart';
+import 'loan_cache_service.dart';
 
 class ExportedLoanFile {
   const ExportedLoanFile({required this.path, required this.kind});
@@ -35,12 +36,16 @@ class LoanExportService {
   Future<ExportedLoanFile> exportJson(
     LoanPlanConfig config,
     List<LoanPlanRow> rows,
-    Map<String, double?> actualPrepayments,
-  ) async {
+    Map<String, double?> actualPrepayments, {
+    List<LoanPaymentHistory> paymentHistory = const <LoanPaymentHistory>[],
+    LoanInitialBalance? recordedInitialBalance,
+  }) async {
     final payload =
         LoanCachedState(
           config: config,
           actualPrepayments: actualPrepayments,
+          paymentHistory: paymentHistory,
+          recordedInitialBalance: recordedInitialBalance,
         ).toJson()..addAll(<String, Object?>{
           'rows': rows.map(_rowToJson).toList(),
           'exportedAt': DateTime.now().toIso8601String(),
@@ -67,98 +72,78 @@ class LoanExportService {
     return ExportedLoanFile(path: file.path, kind: kind);
   }
 
+  // CSV 与 Excel 按同一份列顺序导出，历史实录与计算值能够逐列核对。
+  static const _tabularHeaders = <String>[
+    '月份',
+    '商贷月供',
+    '商贷减少额',
+    '公积金月供',
+    '公积金减少额',
+    '本月月供总额',
+    '总减少额',
+    '预期提前还款',
+    '还贷日期',
+    '实际提前还款',
+    '当日提前利息',
+    '下月基础月供',
+    '转息差额',
+    '基础月供减少额',
+    '差额',
+    '商贷余额',
+    '公积金余额',
+    '本金总额',
+    '商贷期初本金',
+    '商贷月供本金',
+    '商贷月供利息',
+    '公积金期初本金',
+    '公积金月供本金',
+    '公积金月供利息',
+    '预期提前来源',
+  ];
+
+  List<Object?> _tabularValues(LoanPlanRow row) => [
+    row.month,
+    row.commercialPayment,
+    row.commercialReduction,
+    row.providentPayment,
+    row.providentReduction,
+    row.totalPayment,
+    row.totalReduction,
+    row.expectedPrepayment,
+    row.effectivePrepaymentDate,
+    row.actualPrepayment,
+    row.prepaymentInterestRecorded ? row.prepaymentInterestDueNow : null,
+    row.nextMonthBasePayment,
+    row.transferDifference,
+    row.nextMonthBasePaymentReduction,
+    row.difference,
+    row.commercialClosing,
+    row.providentClosing,
+    row.totalBalance,
+    row.commercialOpening,
+    row.commercialPrincipal,
+    row.commercialInterest,
+    row.providentOpening,
+    row.providentPrincipal,
+    row.providentInterest,
+    row.isArchived
+        ? (row.expectedPrepaymentFromActual ? '实还回填' : '历史原计划')
+        : null,
+  ];
+
   String _csvContent(LoanPlanConfig config, List<LoanPlanRow> rows) {
     final lines = <List<Object?>>[
       <Object?>['还款方式', config.repaymentMethod.label],
       const <Object?>[],
-      <Object?>[
-        '月份',
-        '商贷月供',
-        '商贷减少额',
-        '公积金月供',
-        '公积金减少额',
-        '本月月供总额',
-        '总减少额',
-        '预期提前还款',
-        '还贷日期',
-        '实际提前还款',
-        '当日提前利息',
-        '下月基础月供',
-        '转息差额',
-        '基础月供减少额',
-        '差额',
-        '商贷余额',
-        '公积金余额',
-        '本金总额',
-      ],
-      ...rows.map(
-        (row) => <Object?>[
-          row.month,
-          row.commercialPayment,
-          row.commercialReduction ?? '',
-          row.providentPayment,
-          row.providentReduction ?? '',
-          row.totalPayment,
-          row.totalReduction,
-          row.expectedPrepayment,
-          row.effectivePrepaymentDate ?? '',
-          row.actualPrepayment ?? '',
-          row.prepaymentInterestDueNow,
-          row.nextMonthBasePayment,
-          row.transferDifference,
-          row.nextMonthBasePaymentReduction ?? '',
-          row.difference ?? '',
-          row.commercialClosing,
-          row.providentClosing,
-          row.totalBalance,
-        ],
-      ),
+      _tabularHeaders,
+      ...rows.map(_tabularValues),
     ];
     return '\uFEFF${lines.map((line) => line.map(_csvCell).join(',')).join('\r\n')}\r\n';
   }
 
   String _excelHtmlContent(LoanPlanConfig config, List<LoanPlanRow> rows) {
-    final header = <String>[
-      '月份',
-      '商贷月供',
-      '商贷减少额',
-      '公积金月供',
-      '公积金减少额',
-      '本月月供总额',
-      '总减少额',
-      '预期提前还款',
-      '还贷日期',
-      '实际提前还款',
-      '当日提前利息',
-      '下月基础月供',
-      '转息差额',
-      '基础月供减少额',
-      '差额',
-      '商贷余额',
-      '公积金余额',
-      '本金总额',
-    ];
     final body = rows.map((row) {
-      final values = <Object?>[
-        row.month,
-        row.commercialPayment,
-        row.commercialReduction ?? '',
-        row.providentPayment,
-        row.providentReduction ?? '',
-        row.totalPayment,
-        row.totalReduction,
-        row.expectedPrepayment,
-        row.effectivePrepaymentDate ?? '',
-        row.actualPrepayment ?? '',
-        row.prepaymentInterestDueNow,
-        row.nextMonthBasePayment,
-        row.transferDifference,
-        row.nextMonthBasePaymentReduction ?? '',
-        row.difference ?? '',
-        row.commercialClosing,
-        row.providentClosing,
-        row.totalBalance,
-      ];
+      final values = _tabularValues(row);
       return '<tr>${values.map((value) => '<td>${_htmlCell(value)}</td>').join()}</tr>';
     }).join();
     return '''<!DOCTYPE html>
@@ -170,20 +155,39 @@ td{padding:6px;border:1px solid #d9e2f3;text-align:right} td:first-child{text-al
 <h1>提前还贷计算器计划表</h1>
 <p>还款方式：${_escapeHtml(config.repaymentMethod.label)}</p>
 <p>商贷利率：${(config.commercialAnnualRate * 100).toStringAsFixed(2)}%；公积金利率：${(config.providentAnnualRate * 100).toStringAsFixed(2)}%</p>
-<table><thead><tr>${header.map((item) => '<th>${_escapeHtml(item)}</th>').join()}</tr></thead><tbody>$body</tbody></table>
+<table><thead><tr>${_tabularHeaders.map((item) => '<th>${_escapeHtml(item)}</th>').join()}</tr></thead><tbody>$body</tbody></table>
 </body></html>''';
   }
 
   Map<String, Object?> _rowToJson(LoanPlanRow row) {
     return <String, Object?>{
       'month': row.month,
+      if (row.isArchived) 'isArchived': true,
+      if (row.commercialPaymentEvidence != LoanPaymentEvidence.statement)
+        'commercialPaymentEvidence': row.commercialPaymentEvidence.name,
+      if (row.providentInterestEstimated) 'providentInterestEstimated': true,
+      if (row.commercialAnnualRate != null)
+        'commercialAnnualRate': row.commercialAnnualRate,
+      if (row.providentAnnualRate != null)
+        'providentAnnualRate': row.providentAnnualRate,
+      if (row.commercialAnnualRateInferred)
+        'commercialAnnualRateInferred': true,
+      if (row.providentAnnualRateInferred) 'providentAnnualRateInferred': true,
+      'commercialOpening': row.commercialOpening,
+      'commercialPrincipal': row.commercialPrincipal,
+      'commercialInterest': row.commercialInterest,
       'commercialPayment': row.commercialPayment,
       'commercialReduction': row.commercialReduction,
+      'providentOpening': row.providentOpening,
+      'providentPrincipal': row.providentPrincipal,
+      'providentInterest': row.providentInterest,
       'providentPayment': row.providentPayment,
       'providentReduction': row.providentReduction,
       'totalPayment': row.totalPayment,
       'totalReduction': row.totalReduction,
       'expectedPrepayment': row.expectedPrepayment,
+      if (row.expectedPrepaymentFromActual)
+        'expectedPrepaymentFromActual': true,
       'actualPrepayment': row.actualPrepayment,
       'plannedPrepaymentDate': row.plannedPrepaymentDate,
       'effectivePrepaymentDate': row.effectivePrepaymentDate,
@@ -192,11 +196,20 @@ td{padding:6px;border:1px solid #d9e2f3;text-align:right} td:first-child{text-al
           .map(
             (detail) => <String, Object?>{
               'amount': detail.amount,
-              'expectedAmount': detail.expectedAmount,
+              'expectedAmount':
+                  row.isArchived &&
+                      !row.expectedPrepaymentFromActual &&
+                      row.prepaymentDetails.length > 1
+                  ? null
+                  : detail.expectedAmount,
               'actualPrepayment': detail.actualPrepayment,
               'repaymentDate': detail.repaymentDate,
-              'interestDueNow': detail.interestDueNow,
-              'nextMonthDeferredInterest': detail.nextMonthDeferredInterest,
+              'interestDueNow': detail.interestRecorded
+                  ? detail.interestDueNow
+                  : null,
+              'nextMonthDeferredInterest': row.isArchived
+                  ? null
+                  : detail.nextMonthDeferredInterest,
               'commercialClosing': detail.commercialClosing,
               'providentClosing': detail.providentClosing,
               'commercialPrincipalBefore': detail.commercialPrincipalBefore,
@@ -208,7 +221,9 @@ td{padding:6px;border:1px solid #d9e2f3;text-align:right} td:first-child{text-al
             },
           )
           .toList(growable: false),
-      'prepaymentInterestDueNow': row.prepaymentInterestDueNow,
+      'prepaymentInterestDueNow': row.prepaymentInterestRecorded
+          ? row.prepaymentInterestDueNow
+          : null,
       'nextMonthBasePayment': row.nextMonthBasePayment,
       'transferDifference': row.transferDifference,
       'nextMonthBasePaymentReduction': row.nextMonthBasePaymentReduction,

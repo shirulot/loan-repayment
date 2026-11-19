@@ -37,7 +37,9 @@ class CalendarOccurrenceDetailSheet extends StatelessWidget {
           Text(occurrence.title, style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
           Text(
-            '${formatCalendarGregorianDate(occurrence.dateTime)}  ${formatCalendarTime(occurrence.dateTime)}',
+            occurrence.isArchived
+                ? formatCalendarGregorianDate(occurrence.dateTime)
+                : '${formatCalendarGregorianDate(occurrence.dateTime)}  ${formatCalendarTime(occurrence.dateTime)}',
           ),
           if (details != null) ...[
             const SizedBox(height: 16),
@@ -45,11 +47,13 @@ class CalendarOccurrenceDetailSheet extends StatelessWidget {
             const Divider(height: 24),
             _DetailRow('本金', _money(details.principal)),
             _DetailRow('利息', _money(details.interest)),
-            _DetailRow(
-              '年利率',
-              '${(details.annualRate * 100).toStringAsFixed(3)}%',
-            ),
-            _DetailRow('还款方式', details.repaymentMethod.label),
+            if (details.annualRate case final rate?)
+              _DetailRow(
+                details.annualRateInferred ? '年利率（反推）' : '年利率',
+                '${(rate * 100).toStringAsFixed(3)}%',
+              ),
+            if (details.repaymentMethod case final method?)
+              _DetailRow('还款方式', method.label),
             _DetailRow('期初余额', _money(details.openingBalance)),
             _DetailRow('月供后余额', _money(details.closingBalance)),
             _DetailRow('剩余期数', '${details.remainingTerms}期'),
@@ -57,10 +61,21 @@ class CalendarOccurrenceDetailSheet extends StatelessWidget {
             const SizedBox(height: 16),
             _DetailRow('本次提前还贷', _money(prepayment.amount), emphasized: true),
             const Divider(height: 24),
-            _DetailRow('预期金额', _money(prepayment.expectedAmount)),
+            if (!occurrence.isArchived)
+              _DetailRow('预期金额', _money(prepayment.expectedAmount)),
             if (prepayment.actualPrepayment != null)
               _DetailRow('实际金额', _money(prepayment.actualPrepayment!)),
-            _DetailRow('当日提前利息', _money(prepayment.interestDueNow)),
+            _DetailRow(
+              '当日提前利息',
+              prepayment.interestRecorded
+                  ? _money(prepayment.interestDueNow)
+                  : '待核',
+            ),
+            if (occurrence.isArchived && prepayment.interestRecorded)
+              _DetailRow(
+                '实际扣款合计',
+                _money(prepayment.amount + prepayment.interestDueNow),
+              ),
             _DetailRow('交易后商贷余额', _money(prepayment.commercialClosing)),
             _DetailRow('交易后公积金余额', _money(prepayment.providentClosing)),
           ] else if (occurrence.rule != null) ...[

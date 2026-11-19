@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loan_repayment_manager/data/services/loan_cache_service.dart';
 import 'package:loan_repayment_manager/domain/models/loan_models.dart';
+import 'package:loan_repayment_manager/domain/models/loan_payment_history.dart';
 import 'package:loan_repayment_manager/domain/services/loan_calculator.dart';
 import 'package:loan_repayment_manager/ui/features/loan/view_models/loan_planner_view_model.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_formatters.dart';
@@ -12,6 +13,8 @@ class _NoopCacheService extends LoanCacheService {
   Future<void> save(
     LoanPlanConfig config,
     Map<String, double?> actualPrepayments, {
+    List<LoanPaymentHistory> paymentHistory = const <LoanPaymentHistory>[],
+    LoanInitialBalance? recordedInitialBalance,
     String calculatorExpression = '',
     List<double> temporaryCalculatorResults = const <double>[],
     List<String?> temporaryCalculatorExpressions = const <String?>[],
@@ -690,6 +693,195 @@ void main() {
       expect(october.availableFunds, greaterThan(0));
       expect(october.totalPayment, lessThan(september.totalPayment));
       expect(october.expectedPrepayment, 0);
+    },
+  );
+
+  test(
+    'manual mode ignores cash flow and undated amounts and has no transfer difference',
+    () {
+      const manual = LoanPlanConfig(
+        commercialOpeningBalance: 120000,
+        providentOpeningBalance: 120000,
+        commercialAnnualRate: 0.036,
+        providentAnnualRate: 0.024,
+        remainingTerms: 12,
+        monthlySalary: 50000,
+        isPlanRepaymentMode: true,
+        fixedAugustPrepayment: 10000,
+        recentPrepayments: [
+          RecentPrepayment(id: 'unfinished', amount: 1234.56),
+        ],
+      );
+      final restored = LoanPlanConfig.fromJson(manual.toJson());
+      for (final method in LoanRepaymentMethod.values) {
+        final rows = calculator.calculate(
+          restored.copyWith(repaymentMethod: method),
+          {},
+        );
+        expect(rows.every((row) => row.usedPrepayment == 0), isTrue);
+        expect(rows.every((row) => row.prepaymentInterestDueNow == 0), isTrue);
+        expect(rows.every((row) => row.transferDifference == 0), isTrue);
+        expect(rows[1].totalPayment, greaterThan(0));
+        // 跨 28/30/31 天月份验证普通月供始终按月利率计算。
+        for (final row in rows.skip(1)) {
+          expect(
+            row.commercialInterest,
+            closeTo(
+              row.commercialOpening * manual.commercialAnnualRate / 12,
+              0.000001,
+            ),
+          );
+        }
+        if (method == LoanRepaymentMethod.equalPrincipal) {
+          final monthlyDecrease =
+              rows[1].commercialPrincipal * manual.commercialAnnualRate / 12 +
+              rows[1].providentPrincipal * manual.providentAnnualRate / 12;
+          for (var index = 2; index < rows.length; index++) {
+            expect(
+              rows[index - 1].totalPayment - rows[index].totalPayment,
+              closeTo(monthlyDecrease, 0.000001),
+            );
+          }
+        } else {
+          for (final row in rows.skip(2)) {
+            expect(row.totalPayment, closeTo(rows[1].totalPayment, 0.000001));
+          }
+        }
+
+        expect(rows[1].commercialClosing, lessThan(rows[1].commercialOpening));
+        expect(rows.last.totalBalance, closeTo(0, 0.01));
+      }
+      final entered = calculator.calculate(
+        manual.copyWith(
+          recentPrepayments: const [
+            RecentPrepayment(
+              id: 'entered',
+              amount: 1234.56,
+              repaymentDate: '2026-09-15',
+            ),
+          ],
+        ),
+        {},
+      );
+      final september = entered.firstWhere((row) => row.month == '2026-09');
+      expect(september.usedPrepayment, 1234.56);
+      expect(september.prepaymentInterestDueNow, greaterThan(0));
+      expect(
+        september.commercialInterest,
+        closeTo(
+          september.commercialOpening * manual.commercialAnnualRate / 12,
+          0.000001,
+        ),
+      );
+      expect(
+        september.prepaymentInterestDueNow,
+        closeTo(1234.56 * manual.commercialAnnualRate / 360 * 15, 0.000001),
+      );
+
+      expect(
+        entered
+            .where((row) => row.month != '2026-09' && row.month != '2026-10')
+            .every(
+              (row) =>
+                  row.usedPrepayment == 0 &&
+                  row.prepaymentInterestDueNow == 0 &&
+                  row.transferDifference == 0,
+            ),
+        isTrue,
+      );
+      final actual = calculator.calculate(manual, {'2026-08': 999.25});
+      expect(actual.first.expectedPrepayment, 999.25);
+      expect(actual.first.usedPrepayment, 999.25);
+    },
+  );
+
+  test(
+    'manual transfer interest follows only the immediately preceding month',
+    () {
+      const manual = LoanPlanConfig(
+        commercialOpeningBalance: 500000,
+        commercialAnnualRate: 0.036,
+        remainingTerms: 120,
+        isPlanRepaymentMode: true,
+        recentPrepayments: [
+          RecentPrepayment(
+            id: 'august-1',
+            amount: 1000,
+            repaymentDate: '2026-08-15',
+          ),
+          RecentPrepayment(
+            id: 'august-2',
+            amount: 2000,
+            repaymentDate: '2026-08-20',
+          ),
+          RecentPrepayment(
+            id: 'october',
+            amount: 3000,
+            repaymentDate: '2026-10-15',
+          ),
+          RecentPrepayment(
+            id: 'november',
+            amount: 4000,
+            repaymentDate: '2026-11-15',
+          ),
+        ],
+      );
+      final rows = calculator.calculate(manual, {});
+      // 八月有同月多笔，九月转息；九月无提前，十月即便有新提前仍按正常月供。
+      // 十、十一月连续提前，十一、十二月分别转息；十二月无提前，一月恢复。
+      const transferMonths = {'2026-09', '2026-11', '2026-12'};
+      for (final row in rows.skip(1)) {
+        final date = LoanPlanConfig.parseLoanStartDate(row.month)!;
+        final expectedInterest = transferMonths.contains(row.month)
+            ? row.commercialOpening *
+                  manual.commercialAnnualRate /
+                  360 *
+                  DateTime(date.year, date.month, 0).day
+            : row.commercialOpening * manual.commercialAnnualRate / 12;
+        expect(
+          row.commercialInterest,
+          closeTo(expectedInterest, 0.000001),
+          reason: row.month,
+        );
+        final base =
+            row.commercialPrincipal +
+            row.commercialOpening * manual.commercialAnnualRate / 12;
+        expect(
+          row.nextMonthBasePayment,
+          closeTo(base, 0.000001),
+          reason: row.month,
+        );
+        expect(
+          row.transferDifference,
+          closeTo(
+            expectedInterest -
+                row.commercialOpening * manual.commercialAnnualRate / 12,
+            0.000001,
+          ),
+          reason: row.month,
+        );
+      }
+      expect(rows.first.usedPrepayment, 3000);
+      final cleared = calculator.calculate(
+        manual.copyWith(recentPrepayments: const []),
+        {},
+      );
+      expect(
+        cleared.skip(1).every((row) => row.transferDifference.abs() < 0.000001),
+        isTrue,
+      );
+      final legacyActual = calculator.calculate(
+        manual.copyWith(recentPrepayments: const []),
+        {'2026-08': 1500},
+      );
+      expect(
+        legacyActual[1].commercialInterest,
+        closeTo(legacyActual[1].commercialOpening * 0.036 / 360 * 31, 0.000001),
+      );
+      expect(
+        legacyActual[2].commercialInterest,
+        closeTo(legacyActual[2].commercialOpening * 0.036 / 12, 0.000001),
+      );
     },
   );
 

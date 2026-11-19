@@ -12,7 +12,7 @@ class LoanPlanFrozenOverlay extends StatelessWidget {
     required this.viewModel,
     required this.visibleColumns,
     required this.amountsMasked,
-    required this.highlightedMonth,
+    required this.isSelected,
     required this.onRowTap,
     required this.tableWidth,
     required this.verticalController,
@@ -24,8 +24,8 @@ class LoanPlanFrozenOverlay extends StatelessWidget {
   final LoanPlannerViewModel viewModel;
   final Set<LoanPlanColumnKey> visibleColumns;
   final bool amountsMasked;
-  final String? highlightedMonth;
-  final ValueChanged<String> onRowTap;
+  final bool Function(LoanPlanDisplayRow) isSelected;
+  final ValueChanged<LoanPlanDisplayRow> onRowTap;
   final double tableWidth;
   final ScrollController verticalController;
   final ScrollController horizontalController;
@@ -110,7 +110,7 @@ class LoanPlanFrozenOverlay extends StatelessWidget {
                     viewModel: viewModel,
                     visibleColumns: visibleColumns,
                     amountsMasked: amountsMasked,
-                    highlightedMonth: highlightedMonth,
+                    isSelected: isSelected,
                     onRowTap: onRowTap,
                     tableWidth: tableWidth,
                   ),
@@ -220,7 +220,7 @@ class LoanPlanFrozenFixedColumns extends StatelessWidget {
     required this.viewModel,
     required this.visibleColumns,
     required this.amountsMasked,
-    required this.highlightedMonth,
+    required this.isSelected,
     required this.onRowTap,
     required this.tableWidth,
   });
@@ -228,14 +228,15 @@ class LoanPlanFrozenFixedColumns extends StatelessWidget {
   final LoanPlannerViewModel viewModel;
   final Set<LoanPlanColumnKey> visibleColumns;
   final bool amountsMasked;
-  final String? highlightedMonth;
-  final ValueChanged<String> onRowTap;
+  final bool Function(LoanPlanDisplayRow) isSelected;
+  final ValueChanged<LoanPlanDisplayRow> onRowTap;
   final double tableWidth;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final columns = LoanPlanTable.fixedColumns(visibleColumns: visibleColumns);
+    final rows = LoanPlanDisplayRow.expand(viewModel.planRows);
     return Table(
       columnWidths: LoanPlanTable.fixedColumnWidthMap(
         visibleColumns: visibleColumns,
@@ -243,20 +244,18 @@ class LoanPlanFrozenFixedColumns extends StatelessWidget {
       ),
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       border: LoanPlanTable.tableBorder(colors),
-      children: LoanPlanDisplayRow.expand(viewModel.rows).asMap().entries.map((
-        entry,
-      ) {
+      children: rows.asMap().entries.map((entry) {
         final rowIndex = entry.key;
         final displayRow = entry.value;
         final row = displayRow.row;
-        final rowColor = row.month == highlightedMonth
+        final rowColor = isSelected(displayRow)
             ? colors.secondaryContainer
             : row.totalBalance < 0.01
             ? colors.tertiaryContainer
             : rowIndex.isEven
             ? colors.surface
             : colors.surfaceContainerLowest;
-        void onTap() => onRowTap(row.month);
+        void onTap() => onRowTap(displayRow);
         return TableRow(
           decoration: BoxDecoration(color: rowColor),
           children: columns

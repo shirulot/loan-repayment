@@ -94,7 +94,7 @@ class LoanPlanConfig {
   /// The interval used when projecting future planned prepayments.
   final int prepaymentFrequencyMonths;
 
-  /// Restricts planned prepayments to explicit entries or legacy expectations.
+  /// 手动还款只使用录入记录，沿用旧计划模式字段以兼容本地缓存。
   final bool isPlanRepaymentMode;
 
   /// 定额模式仅使用手填金额，不随收入或正常月供变化。
@@ -529,9 +529,19 @@ class RecentPrepayment {
   };
 }
 
+/// 区分银行本息明细、仅实扣金额已核对，以及缺少实扣的推算月供。
+enum LoanPaymentEvidence { statement, debitMatched, estimated }
+
 class LoanPlanRow {
   const LoanPlanRow({
     required this.month,
+    this.isArchived = false,
+    this.commercialPaymentEvidence = LoanPaymentEvidence.statement,
+    this.providentInterestEstimated = false,
+    this.commercialAnnualRate,
+    this.providentAnnualRate,
+    this.commercialAnnualRateInferred = false,
+    this.providentAnnualRateInferred = false,
     required this.remainingTerms,
     required this.commercialOpening,
     required this.commercialPrincipal,
@@ -547,6 +557,7 @@ class LoanPlanRow {
     required this.totalReduction,
     required this.availableFunds,
     required this.expectedPrepayment,
+    this.expectedPrepaymentFromActual = false,
     required this.actualPrepayment,
     required this.plannedPrepaymentDate,
     required this.effectivePrepaymentDate,
@@ -563,6 +574,15 @@ class LoanPlanRow {
   });
 
   final String month;
+
+  /// 历史实录行没有预算、预期提前额或转息前测算值。
+  final bool isArchived;
+  final LoanPaymentEvidence commercialPaymentEvidence;
+  final bool providentInterestEstimated;
+  final double? commercialAnnualRate;
+  final double? providentAnnualRate;
+  final bool commercialAnnualRateInferred;
+  final bool providentAnnualRateInferred;
   final int remainingTerms;
   final double commercialOpening;
   final double commercialPrincipal;
@@ -580,6 +600,9 @@ class LoanPlanRow {
   /// Income plus extra income after subtracting payment and living cost.
   final double availableFunds;
   final double expectedPrepayment;
+
+  /// 历史原计划缺失时，用实际提前本金回填展示。
+  final bool expectedPrepaymentFromActual;
   final double? actualPrepayment;
 
   /// 首页填写的单一还贷日期，同时用于计划展示与利息结转。
@@ -611,11 +634,29 @@ class LoanPlanRow {
 
   double get totalBalance => commercialClosing + providentClosing;
 
+  bool get prepaymentInterestRecorded =>
+      prepaymentDetails.every((detail) => detail.interestRecorded);
+
   /// 转息导致的月供差额：实际月供合计减去转息前基础月供。
-  double get transferDifference => totalPayment - nextMonthBasePayment;
+  double get transferDifference {
+    final value = totalPayment - nextMonthBasePayment;
+    return isArchived ? (value * 100).round() / 100 : value;
+  }
 
   double? get difference =>
-      actualPrepayment == null ? null : actualPrepayment! - expectedPrepayment;
+      expectedPrepaymentFromActual || actualPrepayment == null
+      ? null
+      : actualPrepayment! - expectedPrepayment;
+}
+
+/// 在同一期限、同一历史计息口径下测算的单类贷款月供。
+class LoanInstallmentPreview {
+  const LoanInstallmentPreview(this.principal, this.interest, this.basePayment);
+
+  final double principal;
+  final double interest;
+  final double basePayment;
+  double get payment => principal + interest;
 }
 
 class LoanPrepaymentDetail {
@@ -626,6 +667,9 @@ class LoanPrepaymentDetail {
     required this.actualPrepayment,
     required this.repaymentDate,
     required this.interestDueNow,
+    this.interestRecorded = true,
+    this.paymentAfter,
+    this.basePaymentBefore,
     required this.nextMonthDeferredInterest,
     required this.commercialClosing,
     required this.providentClosing,
@@ -643,6 +687,14 @@ class LoanPrepaymentDetail {
   final double? actualPrepayment;
   final String? repaymentDate;
   final double interestDueNow;
+  final bool interestRecorded;
+
+  /// 同月预测明细按该笔前的计息本金计算的普通月息月供。
+  final double? basePaymentBefore;
+
+  /// 历史账单按笔展示还款后的月供；此预览只用于对照，不参与下一期扣款。
+  final ({LoanInstallmentPreview commercial, LoanInstallmentPreview provident})?
+  paymentAfter;
   final double nextMonthDeferredInterest;
 
   /// Balance immediately after this transaction, used by an expanded plan row.

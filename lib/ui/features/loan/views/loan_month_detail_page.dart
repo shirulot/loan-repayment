@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../domain/models/loan_models.dart';
 import '../view_models/loan_planner_view_model.dart';
 import 'loan_month_detail_content.dart';
+import 'loan_plan_display_row.dart';
 
 /// Shows one month's complete repayment data as vertically scrollable cards.
 ///
@@ -42,8 +43,7 @@ class _LoanMonthDetailPageState extends State<LoanMonthDetailPage> {
     super.dispose();
   }
 
-  List<LoanPlanRow> _orderedRows() =>
-      widget.viewModel.rows.toList(growable: false);
+  List<LoanPlanRow> _orderedRows() => widget.viewModel.planRows;
 
   int _indexForMonth(List<LoanPlanRow> rows, String? month) {
     if (rows.isEmpty || month == null) return 0;
@@ -131,21 +131,25 @@ class _LoanMonthDetailPageState extends State<LoanMonthDetailPage> {
                     onPageChanged: (index) => _changePage(pages, index),
                     itemBuilder: (context, index) {
                       final row = pages[index];
-                      // The calculator stores this reduction on the row that
-                      // follows the repayment month. The detail card describes
-                      // the current month's upcoming change, so read the next
-                      // row; that value already includes all same-month
-                      // prepayments through the cumulative closing balance.
-                      final nextMonthBasePaymentReduction =
-                          index + 1 < pages.length
-                          ? pages[index + 1].nextMonthBasePaymentReduction
+                      // 明细与计划表使用同一相邻行，跨月时保留上个月的最后一笔。
+                      final nearby = LoanPlanDisplayRow.expand([
+                        if (index > 0) pages[index - 1],
+                        row,
+                      ]);
+                      final displayed = nearby
+                          .where((line) => identical(line.row, row))
+                          .toList();
+                      // 月详情另有按整月汇总的“下月基础月供减少”，保留这项月度指标。
+                      final next = index + 1 < pages.length
+                          ? pages[index + 1]
                           : null;
                       return LoanMonthDetailContent(
                         key: ValueKey<String>('month-detail-${row.month}'),
                         row: row,
+                        displayed: displayed,
                         amountsMasked: widget.viewModel.amountsMasked,
                         nextMonthBasePaymentReduction:
-                            nextMonthBasePaymentReduction,
+                            next?.nextMonthBasePaymentReduction,
                       );
                     },
                   ),

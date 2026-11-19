@@ -45,3 +45,8 @@ String formatLoanMoneyProtected(
       ? formatLoanMoneyOrDash(value)
       : formatLoanMoney(value ?? 0);
 }
+
+/// 差额与表中已显示的两位小数对应，避免内部高精度使结果相差一分。
+double loanDisplayedDifference(double left, double right) =>
+    double.parse(left.toStringAsFixed(2)) -
+    double.parse(right.toStringAsFixed(2));

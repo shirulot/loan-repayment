@@ -9,6 +9,7 @@ import 'package:loan_repayment_manager/ui/features/loan/views/loan_calculator_pa
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_detail_page.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_calendar_formatters.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_formatters.dart';
+import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_frequency_selector.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_mobile_cash_flow.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_mobile_layout.dart';
 import 'package:loan_repayment_manager/ui/features/loan/views/loan_plan_mobile_preview.dart';
@@ -345,6 +346,62 @@ void main() {
     expect(viewModel.calculatedRemainingTerms, 162);
     expect(viewModel.config.loanTermYears, closeTo(241 / 12, 0.000001));
   });
+
+  testWidgets(
+    'manual mode applies without preset amount or frequency on a narrow screen',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(320, 700));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final viewModel = createViewModel();
+      addTearDown(viewModel.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(padding: const EdgeInsets.only(top: 24, bottom: 24)),
+            child: child!,
+          ),
+          home: Scaffold(
+            body: SafeArea(
+              child: ListenableBuilder(
+                listenable: viewModel,
+                builder: (context, _) => LoanPlanFrequencySelector(
+                  config: viewModel.config,
+                  onChanged: viewModel.updateConfig,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('还款频率'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('手动还款'));
+      await tester.pumpAndSettle();
+      expect(find.byType(DropdownButtonFormField<int>), findsNothing);
+      expect(find.widgetWithText(TextField, '固定还款金额'), findsNothing);
+      final apply = find.widgetWithText(FilledButton, '应用并重算').last;
+      expect(tester.getBottomLeft(apply).dy, lessThanOrEqualTo(676));
+      await tester.tap(apply);
+      await tester.pumpAndSettle();
+      expect(viewModel.config.isPlanRepaymentMode, isTrue);
+      expect(viewModel.config.isFixedPrepaymentMode, isFalse);
+      expect(viewModel.rows.every((row) => row.usedPrepayment == 0), isTrue);
+      expect(find.text('手动还款 · 仅按录入记录计算'), findsOneWidget);
+      await tester.tap(find.text('还款频率'));
+      await tester.pumpAndSettle();
+      expect(find.byType(DropdownButtonFormField<int>), findsNothing);
+      await tester.tap(find.text('增量还款'));
+      await tester.pumpAndSettle();
+      expect(find.byType(DropdownButtonFormField<int>), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, '应用并重算').last);
+      await tester.pumpAndSettle();
+      expect(viewModel.config.isPlanRepaymentMode, isFalse);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('fixed repayment saves manual amount and frequency', (
     tester,

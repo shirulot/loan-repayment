@@ -4,12 +4,15 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 import '../../domain/models/loan_models.dart';
+import '../../domain/models/loan_payment_history.dart';
 
 /// Snapshot restored before the first application frame is shown.
 class LoanCachedState {
   const LoanCachedState({
     required this.config,
     required this.actualPrepayments,
+    this.paymentHistory = const <LoanPaymentHistory>[],
+    this.recordedInitialBalance,
     this.calculatorExpression = '',
     this.temporaryCalculatorResults = const <double>[],
     this.temporaryCalculatorExpressions = const <String?>[],
@@ -17,6 +20,8 @@ class LoanCachedState {
 
   final LoanPlanConfig config;
   final Map<String, double?> actualPrepayments;
+  final List<LoanPaymentHistory> paymentHistory;
+  final LoanInitialBalance? recordedInitialBalance;
   final String calculatorExpression;
   final List<double> temporaryCalculatorResults;
   final List<String?> temporaryCalculatorExpressions;
@@ -54,9 +59,16 @@ class LoanCachedState {
         );
       }
     }
+    final initialBalance = json['initialBalance'] ?? json['historicalOpening'];
     return LoanCachedState(
       config: LoanPlanConfig.fromJson(Map<String, dynamic>.from(configJson)),
       actualPrepayments: actualPrepayments,
+      paymentHistory: json.containsKey('paymentHistory')
+          ? LoanPaymentHistory.parseList(json['paymentHistory'])
+          : const <LoanPaymentHistory>[],
+      recordedInitialBalance: initialBalance == null
+          ? null
+          : LoanInitialBalance.fromJson(initialBalance),
       calculatorExpression: json['calculatorExpression']?.toString() ?? '',
       temporaryCalculatorResults: temporaryCalculatorResults,
       temporaryCalculatorExpressions: temporaryCalculatorExpressions,
@@ -67,6 +79,11 @@ class LoanCachedState {
   Map<String, Object?> toJson() => <String, Object?>{
     'config': config.toJson(),
     'actualPrepayments': actualPrepayments,
+    if (paymentHistory.isNotEmpty)
+      'paymentHistory': paymentHistory
+          .map((record) => record.toJson())
+          .toList(),
+    'initialBalance': ?recordedInitialBalance?.toJson(),
     'calculatorExpression': calculatorExpression,
     'temporaryCalculatorResults': temporaryCalculatorResults,
     'temporaryCalculatorExpressions': temporaryCalculatorExpressions,
@@ -101,6 +118,8 @@ class LoanCacheService {
   Future<void> save(
     LoanPlanConfig config,
     Map<String, double?> actualPrepayments, {
+    List<LoanPaymentHistory> paymentHistory = const <LoanPaymentHistory>[],
+    LoanInitialBalance? recordedInitialBalance,
     String calculatorExpression = '',
     List<double> temporaryCalculatorResults = const <double>[],
     List<String?> temporaryCalculatorExpressions = const <String?>[],
@@ -109,13 +128,20 @@ class LoanCacheService {
     final payload = LoanCachedState(
       config: config,
       actualPrepayments: actualPrepayments,
+      paymentHistory: paymentHistory,
+      recordedInitialBalance: recordedInitialBalance,
       calculatorExpression: calculatorExpression,
       temporaryCalculatorResults: temporaryCalculatorResults,
       temporaryCalculatorExpressions: temporaryCalculatorExpressions,
     ).toJson();
-    await file.writeAsString(
+    // Replace the cache only after a complete write so interrupted imports
+    // cannot leave existing loan parameters or repayment records truncated.
+    final temporary = File('${file.path}.tmp');
+    await temporary.writeAsString(
       const JsonEncoder.withIndent('  ').convert(payload),
+      flush: true,
     );
+    await temporary.rename(file.path);
   }
 
   Future<File> _stateFile() async {

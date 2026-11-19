@@ -16,12 +16,65 @@ class LoanCalculator {
 
   List<LoanPlanRow> calculate(
     LoanPlanConfig config,
+    Map<String, double?> actualPrepayments, {
+    List<LoanPlanRow> archivedMonths = const [],
+  }) {
+    final calibration = _planStartDate(config, actualPrepayments);
+    var start = calibration;
+    LoanPlanRow? precedingBill;
+    final result = <LoanPlanRow>[];
+
+    // 已按月份排序的账单是结算点。只推算两张账单之间和末张账单之后的月份。
+    void projectUntil([DateTime? end]) {
+      if (end != null && !start.isBefore(end)) return;
+      result.addAll(
+        _project(
+          config,
+          actualPrepayments,
+          start,
+          calibration,
+          precedingBill: precedingBill,
+          end: end,
+        ),
+      );
+    }
+
+    for (final bill in archivedMonths) {
+      final date = DateTime.parse('${bill.month}-01');
+      projectUntil(date);
+      result.add(bill);
+      precedingBill = bill;
+      start = DateTime(date.year, date.month + 1);
+    }
+    projectUntil();
+    return result;
+  }
+
+  List<LoanPlanRow> _project(
+    LoanPlanConfig config,
     Map<String, double?> actualPrepayments,
-  ) {
-    var commercialOpening = config.commercialOpeningBalance;
-    var providentOpening = config.providentOpeningBalance;
-    final planStartDate = _planStartDate(config, actualPrepayments);
-    var remainingTerms = config.remainingTermsAt(planStartDate);
+    DateTime planStartDate,
+    DateTime calibration, {
+    LoanPlanRow? precedingBill,
+    DateTime? end,
+  }) {
+    // 账单期末已扣过月供和逐笔提前本金，下一月直接从其余额和剩余期数续算。
+    var commercialOpening =
+        precedingBill?.commercialClosing ?? config.commercialOpeningBalance;
+    var providentOpening =
+        precedingBill?.providentClosing ?? config.providentOpeningBalance;
+    if (precedingBill != null && commercialOpening + providentOpening < 0.01) {
+      return [];
+    }
+    var remainingTerms = precedingBill == null
+        ? config.remainingTermsAt(planStartDate)
+        : math.max(0, precedingBill.remainingTerms - 1);
+    // 旧版三笔预期额度按原校准月编号，导入更早的账单不移动这些预约。
+    final scheduleOffset =
+        (planStartDate.year - calibration.year) * 12 +
+        planStartDate.month -
+        calibration.month;
+    final endMonth = end == null ? null : _monthAt(end, 0);
     var accumulatedAvailableFunds = 0.0;
     final rows = <LoanPlanRow>[];
 
@@ -29,7 +82,14 @@ class LoanCalculator {
     const maxCalculationMonths = 1200;
     for (var index = 0; index < maxCalculationMonths; index++) {
       final month = _monthAt(planStartDate, index);
-      final isCalibrationMonth = index == 0;
+      if (month == endMonth) break;
+      final scheduleIndex = scheduleOffset + index;
+      final isCalibrationMonth = index == 0 && precedingBill == null;
+      final previousRow = rows.isEmpty ? precedingBill : rows.last;
+      // 手动模式只在上一月实际计入提前还款后的本月转息；普通还款不延续转息。
+      // 自动规划模式保持原有计息规则。
+      final applyTransferInterest =
+          !config.isPlanRepaymentMode || (previousRow?.usedPrepayment ?? 0) > 0;
       final openingBalance = commercialOpening + providentOpening;
 
       final normalPayment = isCalibrationMonth
@@ -39,6 +99,7 @@ class LoanCalculator {
               providentOpening: providentOpening,
               remainingTerms: remainingTerms,
               paymentMonth: month,
+              applyTransferInterest: applyTransferInterest,
               config: config,
             );
       final commercialPrincipal = normalPayment.commercialPrincipal;
@@ -80,22 +141,18 @@ class LoanCalculator {
         );
         accumulatedAvailableFunds = 0;
       } else if (legacyActualPrepayment != null &&
-          config.isFixedPrepaymentMode) {
-        // 定额只安排预计金额，已录入的实际金额保持权威。
+          (config.isFixedPrepaymentMode || config.isPlanRepaymentMode)) {
+        // 定额和手动模式只安排预计金额，已录入的实际金额保持权威。
         requestedPrepayment = math.max(0.0, legacyActualPrepayment);
         accumulatedAvailableFunds = 0;
       } else if (legacyActualPrepayment != null) {
         // Legacy month-keyed actual records remain authoritative during the
         // transition to event-based recent repayment data.
-        final expectedAmount = config.isPlanRepaymentMode
-            ? _planRepaymentInputForIndex(index, config)
-            : hasRecentPrepayments
+        final expectedAmount = hasRecentPrepayments
             ? 0.0
-            : _expectedPrepaymentForIndex(index, config);
+            : _expectedPrepaymentForIndex(scheduleIndex, config);
         requestedPrepayment = expectedAmount > 0
             ? expectedAmount
-            : config.isPlanRepaymentMode
-            ? math.max(0.0, legacyActualPrepayment)
             : math.max(0.0, availableFunds);
         accumulatedAvailableFunds = 0;
       } else if (config.isFixedPrepaymentMode) {
@@ -108,13 +165,11 @@ class LoanCalculator {
         if (isCurrentOrFutureMonth && !config.isPlanRepaymentMode) {
           accumulatedAvailableFunds += math.max(0.0, availableFunds);
         }
-        // Plan mode uses entered repayments without rolling free cash into new ones.
+        // 手动模式只读录入记录，不因收入结余或频率生成提前还款。
         requestedPrepayment = config.isPlanRepaymentMode
-            ? isCurrentOrFutureMonth
-                  ? _planRepaymentInputForIndex(index, config)
-                  : 0.0
+            ? 0.0
             : _requestedPrepayment(
-                index: index,
+                index: scheduleIndex,
                 accumulatedAvailableFunds: accumulatedAvailableFunds,
                 config: config,
                 hasRecentPrepayments: hasRecentPrepayments,
@@ -132,7 +187,9 @@ class LoanCalculator {
       // 自动增量按十元向上取整；手填定额和还款记录保留原金额。
       // 各模式均按剩余本金封顶，避免最后一笔出现负余额。
       final expectedPrepayment =
-          scheduledPrepayments.isNotEmpty || config.isFixedPrepaymentMode
+          scheduledPrepayments.isNotEmpty ||
+              config.isFixedPrepaymentMode ||
+              config.isPlanRepaymentMode
           ? math
                 .min(requestedPrepayment, remainingAfterNormalPayment)
                 .toDouble()
@@ -157,7 +214,7 @@ class LoanCalculator {
                 actualPrepayment: math.max(0.0, legacyActualPrepayment),
                 repaymentDate: scheduledPrepayments.isEmpty
                     ? _validPrepaymentDate(
-                        _plannedPrepaymentDate(index, config),
+                        _plannedPrepaymentDate(scheduleIndex, config),
                         month,
                       )
                     : scheduledPrepayments.first.repaymentDate,
@@ -192,13 +249,14 @@ class LoanCalculator {
             : remainingTerms,
         normalPaymentAlreadyApplied: normalPaymentAppliedInPlanRow,
         paymentMonthStart: month,
+        applyTransferInterest: applyTransferInterest,
         config: config,
       );
       final hasPlannedPrepayment =
           hasExplicitPrepayment || expectedPrepayment > 0;
       final plannedPrepaymentDate = scheduledPrepayments.isEmpty
           ? hasPlannedPrepayment
-                ? _plannedPrepaymentDate(index, config)
+                ? _plannedPrepaymentDate(scheduleIndex, config)
                 : null
           : scheduledPrepayments.first.repaymentDate;
       final effectivePrepaymentDate = appliedPrepayments.dates.isEmpty
@@ -210,20 +268,27 @@ class LoanCalculator {
       final commercialClosing = appliedPrepayments.commercialClosing;
       final providentClosing = appliedPrepayments.providentClosing;
       final prepaymentInterestDueNow = appliedPrepayments.interestDueNow;
-      final nextMonthBasePayment = _baseMonthlyPayment(
-        commercialOpening: commercialOpening,
-        providentOpening: providentOpening,
-        remainingTerms: remainingTerms,
-        config: config,
-      );
-      final previousRow = rows.isEmpty ? null : rows.last;
-      final commercialReduction = index < 2 || previousRow == null
+      // 转息基准和实际月供必须使用同一触发条件，不能按本月提前金额隐藏
+      // 上月提前还款产生的本月差额。
+      final nextMonthBasePayment =
+          config.isPlanRepaymentMode && !applyTransferInterest
+          ? totalPayment
+          : _baseMonthlyPayment(
+              commercialOpening: commercialOpening,
+              providentOpening: providentOpening,
+              remainingTerms: remainingTerms,
+              config: config,
+            );
+      final commercialReduction =
+          previousRow == null || (precedingBill == null && index < 2)
           ? null
           : previousRow.commercialPayment - commercialPayment;
-      final providentReduction = index < 2 || previousRow == null
+      final providentReduction =
+          previousRow == null || (precedingBill == null && index < 2)
           ? null
           : previousRow.providentPayment - providentPayment;
-      final totalReduction = index < 2 || previousRow == null
+      final totalReduction =
+          previousRow == null || (precedingBill == null && index < 2)
           ? null
           : previousRow.totalPayment - totalPayment;
       final nextMonthBasePaymentReduction = previousRow == null
@@ -326,12 +391,16 @@ class LoanCalculator {
 
   double _commercialInterestForPaymentMonth({
     required String month,
+    required bool applyTransferInterest,
     required double opening,
     required LoanPlanConfig config,
   }) {
     if (opening <= 0) return 0;
-    if (config.repaymentMethod ==
-        LoanRepaymentMethod.equalPrincipalAndInterest) {
+    // 是否转息由上月已计入的提前还款决定，与本月是否提前还款无关。
+    // 提前还款当日利息仍由 _interestDueOnRepaymentDay 独立计算。
+    if (!applyTransferInterest ||
+        config.repaymentMethod ==
+            LoanRepaymentMethod.equalPrincipalAndInterest) {
       return opening * config.commercialAnnualRate / 12;
     }
     final date = LoanPlanConfig.parseLoanStartDate('$month-01');
@@ -339,7 +408,7 @@ class LoanCalculator {
     // 月供发生在当月 1 日，计息周期对应上一个完整自然月。
     // 例如 9 月月供对应 8 月 31 天，10 月月供对应 9 月 30 天。
     final daysInInterestMonth = DateTime(date.year, date.month, 0).day;
-    // 商贷每一行都按对应计息月份的自然日数、360 天计息；转息不再额外叠加利息。
+    // 触发转息时按上一自然月天数、360 天计息，不另行叠加同一笔利息。
     return opening *
         config.commercialAnnualRate /
         _prepaymentInterestDayBase *
@@ -378,10 +447,12 @@ class LoanCalculator {
     required double providentOpening,
     required int remainingTerms,
     required String paymentMonth,
+    required bool applyTransferInterest,
     required LoanPlanConfig config,
   }) {
     final commercialInterest = _commercialInterestForPaymentMonth(
       month: paymentMonth,
+      applyTransferInterest: applyTransferInterest,
       opening: commercialOpening,
       config: config,
     );
@@ -436,26 +507,6 @@ class LoanCalculator {
       2 => config.fixedOctoberPrepayment,
       _ => 0.0,
     };
-  }
-
-  double _planRepaymentInputForIndex(int index, LoanPlanConfig config) {
-    RecentPrepayment? legacyRecord;
-    for (final event in config.recentPrepayments) {
-      if (event.legacyMonthOffset == index &&
-          event.repaymentDate.trim().isEmpty) {
-        legacyRecord = event;
-        break;
-      }
-    }
-    if (legacyRecord != null) {
-      return math.max(
-        0.0,
-        legacyRecord.actualPrepayment ?? legacyRecord.amount,
-      );
-    }
-    return config.recentPrepayments.isEmpty
-        ? math.max(0.0, _expectedPrepaymentForIndex(index, config))
-        : 0.0;
   }
 
   bool _hasRecentPrepayments(LoanPlanConfig config) {
@@ -529,6 +580,7 @@ class LoanCalculator {
     required int remainingTermsForAdditionalPayment,
     required bool normalPaymentAlreadyApplied,
     required String paymentMonthStart,
+    required bool applyTransferInterest,
     required LoanPlanConfig config,
   }) {
     var remainingCommercial = commercialBalance;
@@ -551,6 +603,7 @@ class LoanCalculator {
     for (var index = 0; index < prepayments.length; index++) {
       final prepayment = prepayments[index];
       var normalPaymentBefore = const _NormalPayment.zero();
+      double? basePaymentBefore;
       if (prepayments.length > 1 && !normalPaymentAlreadyApplied) {
         // Each detail shows the payment immediately before its own prepayment:
         // the first uses the opening balance and later details use prior
@@ -562,6 +615,13 @@ class LoanCalculator {
           // 同月明细与月度行属于同一期月供，均按上一自然月日数计息。
           // 不能传入下一月，否则 11 月会误用 11 月的 30 天，而非 10 月的 31 天。
           paymentMonth: paymentMonthStart,
+          applyTransferInterest: applyTransferInterest,
+          config: config,
+        );
+        basePaymentBefore = _baseMonthlyPayment(
+          commercialOpening: previewCommercial,
+          providentOpening: previewProvident,
+          remainingTerms: previewRemainingTerms,
           config: config,
         );
         if (index == 0) {
@@ -643,6 +703,7 @@ class LoanCalculator {
             nextMonthDeferredInterest: 0,
             commercialClosing: remainingCommercial,
             providentClosing: remainingProvident,
+            basePaymentBefore: basePaymentBefore,
             commercialPrincipalBefore: normalPaymentBefore.commercialPrincipal,
             commercialInterestBefore: normalPaymentBefore.commercialInterest,
             commercialPaymentBefore: normalPaymentBefore.commercialPayment,

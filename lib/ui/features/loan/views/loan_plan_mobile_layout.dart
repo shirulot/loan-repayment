@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/extensions/string_extensions.dart';
 import '../../../../domain/models/loan_models.dart';
+import '../../../../domain/models/loan_payment_history.dart';
 import '../view_models/loan_planner_view_model.dart';
 import 'loan_plan_formatters.dart';
 import 'loan_plan_frequency_selector.dart';
@@ -50,6 +51,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
   // Tracks active edits so model synchronization does not overwrite them.
   final Map<String, FocusNode> _focusNodes = <String, FocusNode>{};
   late List<RecentPrepayment> _recentPrepayments;
+  late LoanInitialBalance _syncedInitialBalance;
   Timer? _recentPrepaymentSyncTimer;
   // Stores correction mode by event identity so sorting does not unlock the
   // wrong repayment row.
@@ -65,6 +67,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     super.initState();
     _recentPrepayments = _recentEventsForEditing(widget.config);
     _syncFromConfig();
+    _syncInitialBalance(widget.viewModel.initialBalance);
   }
 
   @override
@@ -76,6 +79,12 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
         _recentPrepayments.map((event) => event.id),
       );
       _syncFromConfig();
+    }
+    final initial = widget.viewModel.initialBalance;
+    if (initial.date != _syncedInitialBalance.date ||
+        initial.commercial != _syncedInitialBalance.commercial ||
+        initial.provident != _syncedInitialBalance.provident) {
+      _syncInitialBalance(initial);
     }
   }
 
@@ -113,6 +122,24 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     }
   }
 
+  /// 初期信息使用独立控制器，导入历史时只更新这组显示值。
+  void _syncInitialBalance(LoanInitialBalance initial) {
+    _syncedInitialBalance = initial;
+    final date = initial.date;
+    _setControllerTextIfIdle(
+      'initialLoanDate',
+      date == null ? '' : _dateText(date),
+    );
+    _setControllerTextIfIdle(
+      'initialCommercialPrincipal',
+      formatLoanEditableNumber(initial.commercial),
+    );
+    _setControllerTextIfIdle(
+      'initialProvidentPrincipal',
+      formatLoanEditableNumber(initial.provident),
+    );
+  }
+
   Map<String, String> _values(LoanPlanConfig config) {
     String editableNumber(double value) => formatLoanEditableNumber(value);
     return {
@@ -142,11 +169,27 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
   double _zeroIfBlank(String key) =>
       (_controllers[key]?.text ?? '').toDoubleOr(0);
 
+  /// 保存初期信息时，避免把未编辑的测算值经显示舍入或百分比换算后写回。
+  double _planNumber(
+    String key,
+    double current, {
+    double scale = 1,
+    bool zeroIfBlank = false,
+  }) {
+    final text = _controllers[key]?.text.trim() ?? '';
+    final displayedValue = current * scale;
+    if (text == formatLoanEditableNumber(displayedValue)) return current;
+    return text.toDoubleOr(zeroIfBlank ? 0 : displayedValue) / scale;
+  }
+
   void _apply() {
     final old = widget.viewModel.config;
     final loanStartDate = _controllers['loanStartDate']?.text.trim() ?? '';
-    final loanTermYears = (_controllers['loanTermYears']?.text ?? '')
-        .toDoubleOr(0);
+    final loanTermYears = _planNumber(
+      'loanTermYears',
+      old.loanTermYears,
+      zeroIfBlank: true,
+    );
     final remainingTerms = (_controllers['remainingTerms']?.text ?? '').toIntOr(
       old.remainingTermsAt(widget.viewModel.calculationDate),
     );
@@ -160,28 +203,69 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
       ).showSnackBar(const SnackBar(content: Text('请同时填写有效的贷款开始日期和总年限。')));
       return;
     }
-    if (!_hasValidRecentPrepaymentDates()) return;
+    // 未编辑近期还款时保留原记录，避免只改初期信息也重写旧版还款计划。
+    final recentEditPending = _recentPrepaymentSyncTimer?.isActive == true;
+    if ((recentEditPending || old.recentPrepayments.isNotEmpty) &&
+        !_hasValidRecentPrepaymentDates()) {
+      return;
+    }
+
+    final initial = widget.viewModel.initialBalance;
+    final dateText = _controllers['initialLoanDate']?.text ?? '';
+    final initialDate = LoanPlanConfig.parseLoanStartDate(dateText);
+    final initialCommercial = _number(
+      'initialCommercialPrincipal',
+      initial.commercial,
+    );
+    final initialProvident = _number(
+      'initialProvidentPrincipal',
+      initial.provident,
+    );
+    if (!initialCommercial.isFinite || !initialProvident.isFinite) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请填写有效的初期贷款本金。')));
+      return;
+    }
 
     var updatedConfig = old.copyWith(
-      commercialOpeningBalance: _number(
+      commercialOpeningBalance: _planNumber(
         'commercialOpeningBalance',
         old.commercialOpeningBalance,
       ),
-      providentOpeningBalance: _number(
+      providentOpeningBalance: _planNumber(
         'providentOpeningBalance',
         old.providentOpeningBalance,
       ),
-      commercialAnnualRate:
-          _number('commercialAnnualRate', old.commercialAnnualRate * 100) / 100,
-      providentAnnualRate:
-          _number('providentAnnualRate', old.providentAnnualRate * 100) / 100,
+      commercialAnnualRate: _planNumber(
+        'commercialAnnualRate',
+        old.commercialAnnualRate,
+        scale: 100,
+      ),
+      providentAnnualRate: _planNumber(
+        'providentAnnualRate',
+        old.providentAnnualRate,
+        scale: 100,
+      ),
       loanStartDate: loanStartDate,
       loanTermYears: loanTermYears,
-      monthlySalary: _number('monthlySalary', old.monthlySalary),
-      monthlyExtraIncome: _number('monthlyExtraIncome', old.monthlyExtraIncome),
-      monthlyLivingCost: _number('monthlyLivingCost', old.monthlyLivingCost),
-      monthlyOtherExpense: _zeroIfBlank('monthlyOtherExpense'),
-      recentPrepayments: _eventsFromControllers(),
+      monthlySalary: _planNumber('monthlySalary', old.monthlySalary),
+      monthlyExtraIncome: _planNumber(
+        'monthlyExtraIncome',
+        old.monthlyExtraIncome,
+      ),
+      monthlyLivingCost: _planNumber(
+        'monthlyLivingCost',
+        old.monthlyLivingCost,
+      ),
+      monthlyOtherExpense: _planNumber(
+        'monthlyOtherExpense',
+        old.monthlyOtherExpense,
+        zeroIfBlank: true,
+      ),
+      recentPrepayments: recentEditPending
+          ? _eventsFromControllers()
+          : old.recentPrepayments,
     );
     if (_lastEditedDurationKey == 'remainingTerms') {
       updatedConfig = updatedConfig.withRemainingTermsAt(
@@ -189,7 +273,15 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
         remainingTerms,
       );
     }
-    widget.viewModel.updateConfig(updatedConfig);
+    if (recentEditPending) _recentPrepaymentSyncTimer?.cancel();
+    widget.viewModel.updateConfig(
+      updatedConfig,
+      initialBalance: LoanInitialBalance(
+        date: initialDate,
+        commercial: initialCommercial,
+        provident: initialProvident,
+      ),
+    );
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('参数已应用，计划已重算。')));
@@ -603,7 +695,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     setState(() => _highlightedPreviewMonth = month);
   }
 
-  /// Recent events can use any valid historical or future repayment date.
+  /// 初期日期由整份参数一起保存，不触发提前还款输入的即时同步。
   Future<void> _pickRepaymentDate(String key) async {
     final parsed = LoanPlanConfig.parseLoanStartDate(
       _controllers[key]?.text ?? '',
@@ -621,13 +713,12 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
       initialDate: initialDate,
       firstDate: firstDate,
       lastDate: lastDate,
-      helpText: '选择还贷日期',
+      helpText: key == 'initialLoanDate' ? '选择初期贷款日期' : '选择还贷日期',
       cancelText: '取消',
       confirmText: '确定',
     );
     if (selected == null || !mounted) return;
-    _controllers[key]?.text =
-        '${selected.year}-${selected.month.toString().padLeft(2, '0')}-${selected.day.toString().padLeft(2, '0')}';
-    _commitRecentPrepayments();
+    _controllers[key]?.text = _dateText(selected);
+    if (key != 'initialLoanDate') _commitRecentPrepayments();
   }
 }

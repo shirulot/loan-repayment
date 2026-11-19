@@ -24,6 +24,7 @@ class CalendarDayOccurrence {
     this.amount,
     this.paymentDetails,
     this.prepaymentDetails,
+    this.isArchived = false,
     this.node,
     this.rule,
   });
@@ -36,6 +37,7 @@ class CalendarDayOccurrence {
   final double? amount;
   final CalendarPaymentDetails? paymentDetails;
   final LoanPrepaymentDetail? prepaymentDetails;
+  final bool isArchived;
   final CalendarNode? node;
   final CalendarMonthlyRule? rule;
 }
@@ -46,6 +48,7 @@ class CalendarPaymentDetails {
     required this.principal,
     required this.interest,
     required this.annualRate,
+    this.annualRateInferred = false,
     required this.openingBalance,
     required this.closingBalance,
     required this.remainingTerms,
@@ -55,11 +58,12 @@ class CalendarPaymentDetails {
   final double payment;
   final double principal;
   final double interest;
-  final double annualRate;
+  final double? annualRate;
+  final bool annualRateInferred;
   final double openingBalance;
   final double closingBalance;
   final int remainingTerms;
-  final LoanRepaymentMethod repaymentMethod;
+  final LoanRepaymentMethod? repaymentMethod;
 }
 
 class CalendarViewModel extends ChangeNotifier {
@@ -87,8 +91,8 @@ class CalendarViewModel extends ChangeNotifier {
        // ignore: prefer_initializing_formals
        _workdayCalendar = workdayCalendar,
        _now = now ?? DateTime.now {
-    _loanPlanner.addListener(_syncPrepaymentNodes);
-    _syncPrepaymentNodes();
+    _loanPlanner.addListener(_onLoanPlanChanged);
+    _onLoanPlanChanged();
     _isInitializing = false;
     _refreshUnreadState();
     _queueNotificationRefresh();
@@ -104,6 +108,7 @@ class CalendarViewModel extends ChangeNotifier {
   final ChineseWorkdayCalendar _workdayCalendar;
   final DateTime Function() _now;
   CalendarData _data;
+  Map<String, LoanPlanRow> _archivedRows = const {};
   ChineseHolidayCalendarSnapshot _holidaySnapshot;
   bool _isHolidayDataRefreshing = false;
   bool _isInitializing = true;
@@ -124,9 +129,11 @@ class CalendarViewModel extends ChangeNotifier {
 
   List<CalendarDayOccurrence> occurrencesOn(DateTime date) {
     final day = _dateOnly(date);
-    final occurrences = <CalendarDayOccurrence>[];
+    final occurrences = _archivedOccurrencesOn(day);
     for (final node in _data.nodes) {
-      if (!_isSameDay(node.dateTime, day)) continue;
+      if (!_isSameDay(node.dateTime, day) || _isArchivedPrepayment(node)) {
+        continue;
+      }
       final key = _nodeReminderKey(node);
       occurrences.add(
         CalendarDayOccurrence(
@@ -145,6 +152,7 @@ class CalendarViewModel extends ChangeNotifier {
       // A date near month-end can settle in the following month.
       for (var offset = -2; offset <= 0; offset++) {
         final anchor = DateTime(day.year, day.month + offset, 1);
+        if (_isArchivedPayment(rule, anchor)) continue;
         final occurrence = _ruleOccurrence(rule, anchor.year, anchor.month);
         if (occurrence.isBefore(rule.createdAt) ||
             !_isSameDay(occurrence, day)) {
@@ -178,6 +186,104 @@ class CalendarViewModel extends ChangeNotifier {
 
   bool hasUnreadOn(DateTime date) =>
       occurrencesOn(date).any((occurrence) => occurrence.isUnread);
+
+  /// 历史事项从计划表实时派生，无需复制成可编辑提醒或写入日历缓存。
+  List<CalendarDayOccurrence> _archivedOccurrencesOn(DateTime day) {
+    final occurrences = <CalendarDayOccurrence>[];
+    if (_archivedRows.isEmpty) return occurrences;
+    final row = _archivedRows[_monthKey(day)];
+    if (row != null) {
+      if (day.day == 1 && row.commercialPayment > 0) {
+        final note = switch (row.commercialPaymentEvidence) {
+          LoanPaymentEvidence.statement => '历史商贷月供',
+          LoanPaymentEvidence.debitMatched => '实扣已核对，本息按余额和实扣反推',
+          LoanPaymentEvidence.estimated => '月供和扣款日按历史还款条件推算',
+        };
+        occurrences.add(
+          _archivedMonthlyPayment(
+            row,
+            day,
+            CalendarMonthlyRuleType.commercialPayment,
+            note,
+          ),
+        );
+      }
+      for (final (index, detail) in row.prepaymentDetails.indexed) {
+        final date = LoanPlanConfig.parseLoanStartDate(
+          detail.repaymentDate ?? '',
+        );
+        if (date == null || !_isSameDay(date, day)) continue;
+        occurrences.add(
+          CalendarDayOccurrence(
+            key: 'history:${row.month}:prepayment:$index',
+            title: '历史提前还款',
+            dateTime: day,
+            isUnread: false,
+            isArchived: true,
+            amount: detail.amount,
+            prepaymentDetails: detail,
+          ),
+        );
+      }
+    }
+    final providentRule = _data.monthlyRules
+        .where(
+          (rule) => rule.type == CalendarMonthlyRuleType.providentFirstWorkday,
+        )
+        .firstOrNull;
+    for (var offset = -2; offset <= 0; offset++) {
+      final anchor = DateTime(day.year, day.month + offset);
+      final historical = _archivedRows[_monthKey(anchor)];
+      if (historical == null || historical.providentPayment <= 0) continue;
+      final date = providentRule == null
+          ? _workdayCalendar.firstWorkday(anchor.year, anchor.month)
+          : _ruleOccurrence(providentRule, anchor.year, anchor.month);
+      if (!_isSameDay(date, day)) continue;
+      occurrences.add(
+        _archivedMonthlyPayment(
+          historical,
+          day,
+          CalendarMonthlyRuleType.providentFirstWorkday,
+          historical.providentInterestEstimated
+              ? '公积金利息和扣款日按还款规则估算'
+              : '扣款日按公积金还款规则估算',
+        ),
+      );
+    }
+    return occurrences;
+  }
+
+  CalendarDayOccurrence _archivedMonthlyPayment(
+    LoanPlanRow row,
+    DateTime day,
+    CalendarMonthlyRuleType type,
+    String note,
+  ) {
+    final details = _paymentDetailsForRow(row, type)!;
+    return CalendarDayOccurrence(
+      key: 'history:${row.month}:${type.name}',
+      title: type == CalendarMonthlyRuleType.commercialPayment
+          ? '商贷扣款'
+          : '公积金扣款',
+      dateTime: day,
+      isUnread: false,
+      isArchived: true,
+      note: note,
+      amount: details.payment,
+      paymentDetails: details,
+    );
+  }
+
+  bool _isArchivedPrepayment(CalendarNode node) =>
+      node.source == CalendarNodeSource.prepayment &&
+      _archivedRows.containsKey(_monthKey(node.dateTime));
+
+  bool _isArchivedPayment(CalendarMonthlyRule rule, DateTime anchor) =>
+      rule.type != CalendarMonthlyRuleType.note &&
+      _archivedRows.containsKey(_monthKey(anchor));
+
+  static String _monthKey(DateTime date) =>
+      '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}';
 
   void addNote(CalendarNode node) {
     final readKeys = Set<String>.from(_data.readReminderKeys);
@@ -362,7 +468,21 @@ class CalendarViewModel extends ChangeNotifier {
     }
   }
 
-  void _syncPrepaymentNodes() {
+  void _onLoanPlanChanged() {
+    final rows = {
+      for (final row in _loanPlanner.planRows)
+        if (row.isArchived) row.month: row,
+    };
+    final archiveChanged = !mapEquals(rows, _archivedRows);
+    _archivedRows = rows;
+    if (!_syncPrepaymentNodes() && archiveChanged && !_isInitializing) {
+      _refreshUnreadState();
+      _queueNotificationRefresh();
+      notifyListeners();
+    }
+  }
+
+  bool _syncPrepaymentNodes() {
     var changed = false;
     final nodes = List<CalendarNode>.from(_data.nodes);
     final readKeys = Set<String>.from(_data.readReminderKeys);
@@ -409,7 +529,9 @@ class CalendarViewModel extends ChangeNotifier {
         if (!updated.dateTime.isAfter(_now())) {
           // Imported history should not become a new unread reminder.
           readKeys.add(_nodeReminderKey(updated));
-        } else if (!_isInitializing && updated.notificationsEnabled) {
+        } else if (!_isInitializing &&
+            updated.notificationsEnabled &&
+            !_isArchivedPrepayment(updated)) {
           unawaited(_notificationService.requestPermission());
         }
       } else if (!_sameNode(previous, updated)) {
@@ -420,9 +542,10 @@ class CalendarViewModel extends ChangeNotifier {
         changed = true;
       }
     }
-    if (!changed) return;
+    if (!changed) return false;
     _data = _data.copyWith(nodes: nodes, readReminderKeys: readKeys);
     _afterDataChanged();
+    return true;
   }
 
   bool _sameNode(CalendarNode left, CalendarNode right) =>
@@ -447,6 +570,7 @@ class CalendarViewModel extends ChangeNotifier {
     final unread = <String>{};
     for (final node in _data.nodes) {
       if (node.notificationsEnabled &&
+          !_isArchivedPrepayment(node) &&
           !node.dateTime.isAfter(now) &&
           !_data.readReminderKeys.contains(_nodeReminderKey(node))) {
         unread.add(_nodeReminderKey(node));
@@ -460,6 +584,7 @@ class CalendarViewModel extends ChangeNotifier {
         !month.isAfter(now);
         month = DateTime(month.year, month.month + 1, 1)
       ) {
+        if (_isArchivedPayment(rule, month)) continue;
         final occurrence = _ruleOccurrence(rule, month.year, month.month);
         if (occurrence.isBefore(rule.createdAt) || occurrence.isAfter(now)) {
           continue;
@@ -478,13 +603,18 @@ class CalendarViewModel extends ChangeNotifier {
     _nextReminderTimer?.cancel();
     DateTime? next;
     for (final node in _data.nodes) {
-      if (!node.notificationsEnabled || !node.dateTime.isAfter(now)) continue;
+      if (!node.notificationsEnabled ||
+          _isArchivedPrepayment(node) ||
+          !node.dateTime.isAfter(now)) {
+        continue;
+      }
       if (next == null || node.dateTime.isBefore(next)) next = node.dateTime;
     }
     for (final rule in _data.monthlyRules) {
       if (!rule.notificationsEnabled) continue;
       for (var offset = -2; offset < 14; offset++) {
         final month = DateTime(now.year, now.month + offset, 1);
+        if (_isArchivedPayment(rule, month)) continue;
         final occurrence = _ruleOccurrence(rule, month.year, month.month);
         if (occurrence.isBefore(rule.createdAt) || !occurrence.isAfter(now)) {
           continue;
@@ -537,6 +667,7 @@ class CalendarViewModel extends ChangeNotifier {
     final reminders = <CalendarReminderOccurrence>[];
     for (final node in _data.nodes) {
       if (!node.notificationsEnabled ||
+          _isArchivedPrepayment(node) ||
           !node.dateTime.isAfter(now) ||
           node.dateTime.isAfter(end)) {
         continue;
@@ -557,6 +688,7 @@ class CalendarViewModel extends ChangeNotifier {
       if (!rule.notificationsEnabled) continue;
       for (var offset = -2; offset < 20; offset++) {
         final month = DateTime(now.year, now.month + offset, 1);
+        if (_isArchivedPayment(rule, month)) continue;
         final occurrence = _ruleOccurrence(rule, month.year, month.month);
         if (occurrence.isBefore(rule.createdAt) ||
             !occurrence.isAfter(now) ||
@@ -603,66 +735,74 @@ class CalendarViewModel extends ChangeNotifier {
     CalendarMonthlyRule rule,
     DateTime anchor,
   ) {
-    final month = '${anchor.year}-${anchor.month.toString().padLeft(2, '0')}';
+    final month = _monthKey(anchor);
     for (final row in _loanPlanner.rows) {
       if (row.month != month) continue;
-      final config = _loanPlanner.config;
-      // In multi-prepayment months the first transaction owns the one applied
-      // regular payment; the row's closing balances also include prepayments.
-      final firstPrepayment = row.prepaymentDetails.length > 1
-          ? row.prepaymentDetails.first
-          : null;
-      final commercialPrincipal =
-          firstPrepayment?.hasNormalPaymentBefore == true
-          ? firstPrepayment!.commercialPrincipalBefore
-          : row.commercialPrincipal;
-      final commercialInterest = firstPrepayment?.hasNormalPaymentBefore == true
-          ? firstPrepayment!.commercialInterestBefore
-          : row.commercialInterest;
-      final providentPrincipal = firstPrepayment?.hasNormalPaymentBefore == true
-          ? firstPrepayment!.providentPrincipalBefore
-          : row.providentPrincipal;
-      final providentInterest = firstPrepayment?.hasNormalPaymentBefore == true
-          ? firstPrepayment!.providentInterestBefore
-          : row.providentInterest;
-      return switch (rule.type) {
-        CalendarMonthlyRuleType.commercialPayment => CalendarPaymentDetails(
-          payment: commercialPrincipal + commercialInterest,
-          principal: commercialPrincipal,
-          interest: commercialInterest,
-          annualRate: config.commercialAnnualRate,
-          openingBalance: row.commercialOpening,
-          closingBalance: math.max(
-            0,
-            row.commercialOpening - commercialPrincipal,
-          ),
-          remainingTerms: row.remainingTerms,
-          repaymentMethod: config.repaymentMethod,
-        ),
-        CalendarMonthlyRuleType.providentFirstWorkday => CalendarPaymentDetails(
-          payment: providentPrincipal + providentInterest,
-          principal: providentPrincipal,
-          interest: providentInterest,
-          annualRate: config.providentAnnualRate,
-          openingBalance: row.providentOpening,
-          closingBalance: math.max(
-            0,
-            row.providentOpening - providentPrincipal,
-          ),
-          remainingTerms: row.remainingTerms,
-          repaymentMethod: config.repaymentMethod,
-        ),
-        CalendarMonthlyRuleType.note => null,
-      };
+      return _paymentDetailsForRow(row, rule.type);
     }
     return null;
+  }
+
+  CalendarPaymentDetails? _paymentDetailsForRow(
+    LoanPlanRow row,
+    CalendarMonthlyRuleType type,
+  ) {
+    final config = _loanPlanner.config;
+    // In multi-prepayment months the first transaction owns the one applied
+    // regular payment; the row's closing balances also include prepayments.
+    final firstPrepayment = row.prepaymentDetails.length > 1
+        ? row.prepaymentDetails.first
+        : null;
+    final commercialPrincipal = firstPrepayment?.hasNormalPaymentBefore == true
+        ? firstPrepayment!.commercialPrincipalBefore
+        : row.commercialPrincipal;
+    final commercialInterest = firstPrepayment?.hasNormalPaymentBefore == true
+        ? firstPrepayment!.commercialInterestBefore
+        : row.commercialInterest;
+    final providentPrincipal = firstPrepayment?.hasNormalPaymentBefore == true
+        ? firstPrepayment!.providentPrincipalBefore
+        : row.providentPrincipal;
+    final providentInterest = firstPrepayment?.hasNormalPaymentBefore == true
+        ? firstPrepayment!.providentInterestBefore
+        : row.providentInterest;
+    return switch (type) {
+      CalendarMonthlyRuleType.commercialPayment => CalendarPaymentDetails(
+        payment: commercialPrincipal + commercialInterest,
+        principal: commercialPrincipal,
+        interest: commercialInterest,
+        annualRate: row.isArchived
+            ? row.commercialAnnualRate
+            : config.commercialAnnualRate,
+        annualRateInferred: row.commercialAnnualRateInferred,
+        openingBalance: row.commercialOpening,
+        closingBalance: math.max(
+          0,
+          row.commercialOpening - commercialPrincipal,
+        ),
+        remainingTerms: row.remainingTerms,
+        repaymentMethod: row.isArchived ? null : config.repaymentMethod,
+      ),
+      CalendarMonthlyRuleType.providentFirstWorkday => CalendarPaymentDetails(
+        payment: providentPrincipal + providentInterest,
+        principal: providentPrincipal,
+        interest: providentInterest,
+        annualRate: row.isArchived
+            ? row.providentAnnualRate
+            : config.providentAnnualRate,
+        annualRateInferred: row.providentAnnualRateInferred,
+        openingBalance: row.providentOpening,
+        closingBalance: math.max(0, row.providentOpening - providentPrincipal),
+        remainingTerms: row.remainingTerms,
+        repaymentMethod: row.isArchived ? null : config.repaymentMethod,
+      ),
+      CalendarMonthlyRuleType.note => null,
+    };
   }
 
   LoanPrepaymentDetail? _prepaymentDetailsForNode(CalendarNode node) {
     final id = node.prepaymentId;
     if (id == null) return null;
-    final month =
-        '${node.dateTime.year}-${node.dateTime.month.toString().padLeft(2, '0')}';
+    final month = _monthKey(node.dateTime);
     for (final row in _loanPlanner.rows) {
       if (row.month != month) continue;
       for (final detail in row.prepaymentDetails) {
@@ -703,7 +843,7 @@ class CalendarViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
-    _loanPlanner.removeListener(_syncPrepaymentNodes);
+    _loanPlanner.removeListener(_onLoanPlanChanged);
     _nextReminderTimer?.cancel();
     super.dispose();
   }

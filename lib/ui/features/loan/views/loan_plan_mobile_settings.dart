@@ -79,6 +79,7 @@ class LoanMobileSettingsGroup extends StatelessWidget {
       suffix: suffix,
       integer: integer,
       date: date,
+      datePickerTooltip: key == 'initialLoanDate' ? '选择初期贷款日期' : '选择还贷日期',
       enabled: enabled,
       amountsMasked: viewModel.amountsMasked,
       onChanged: key.startsWith('recentPrepayment-')
@@ -174,6 +175,7 @@ class LoanMobileSettingsGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     const recentPrepaymentTitle = '最近三笔还款';
+    const projectionOpeningTitle = '测算基准本金';
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -223,11 +225,51 @@ class LoanMobileSettingsGroup extends StatelessWidget {
                 _money(viewModel.currentProvidentBalance),
                 suffix: '元',
               ),
-              _subsectionLabel(context, '初期贷款本金与利率'),
-              _inputField('初期商贷本金', 'commercialOpeningBalance', suffix: '元'),
-              _inputField('初期公积金本金', 'providentOpeningBalance', suffix: '元'),
-              _inputField('商贷年利率', 'commercialAnnualRate', suffix: '%'),
-              _inputField('公积金年利率', 'providentAnnualRate', suffix: '%'),
+              _subsectionLabel(context, '初期贷款信息'),
+              _inputField(
+                '初期贷款日期',
+                'initialLoanDate',
+                suffix: 'YYYY-MM-DD',
+                date: true,
+              ),
+              _inputField('初期商贷本金', 'initialCommercialPrincipal', suffix: '元'),
+              _inputField('初期公积金本金', 'initialProvidentPrincipal', suffix: '元'),
+              _inputField('当前商贷年利率', 'commercialAnnualRate', suffix: '%'),
+              _inputField('当前公积金年利率', 'providentAnnualRate', suffix: '%'),
+              LoanMobileCompactSection(
+                title: projectionOpeningTitle,
+                icon: Icons.account_balance_outlined,
+                summary: '',
+                expanded: expandedSections.contains(projectionOpeningTitle),
+                onExpansionChanged: (expanded) =>
+                    onSectionExpansionChanged(projectionOpeningTitle, expanded),
+                children: [
+                  // 有历史时直接显示预测实际采用的期末余额，避免编辑无效的旧基准。
+                  if (viewModel.latestArchivedRow case final bill?) ...[
+                    _readonlyField(
+                      '${bill.month} 商贷期末本金',
+                      _money(bill.commercialClosing),
+                      suffix: '元',
+                    ),
+                    _readonlyField(
+                      '${bill.month} 公积金期末本金',
+                      _money(bill.providentClosing),
+                      suffix: '元',
+                    ),
+                  ] else ...[
+                    _inputField(
+                      '商贷测算基准本金',
+                      'commercialOpeningBalance',
+                      suffix: '元',
+                    ),
+                    _inputField(
+                      '公积金测算基准本金',
+                      'providentOpeningBalance',
+                      suffix: '元',
+                    ),
+                  ],
+                ],
+              ),
             ],
           ),
           Divider(color: colors.outlineVariant.withValues(alpha: 0.48)),
