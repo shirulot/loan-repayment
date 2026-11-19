@@ -13,6 +13,7 @@ import org.gradle.api.tasks.TaskAction
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -101,11 +102,25 @@ android {
         versionName = flutter.versionName
     }
 
+    // 正式发布沿用本机密钥；未配置密钥的开发者仍可构建本地测试包。
+    val signingPropertiesFile = rootProject.file("key.properties")
+    val releaseSigning = if (signingPropertiesFile.isFile) {
+        val properties = Properties().apply {
+            signingPropertiesFile.inputStream().use { load(it) }
+        }
+        signingConfigs.create("release") {
+            storeFile = rootProject.file(properties.getProperty("storeFile"))
+            storePassword = properties.getProperty("storePassword")
+            keyAlias = properties.getProperty("keyAlias")
+            keyPassword = properties.getProperty("keyPassword")
+        }
+    } else {
+        signingConfigs.getByName("debug")
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = releaseSigning
         }
     }
 }

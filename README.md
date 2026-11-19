@@ -148,7 +148,7 @@ flutter test
 
 | 目标 | 构建命令 | 项目配置 |
 | --- | --- | --- |
-| Android | `flutter build apk --release` | Gradle 发布构建任务将 `pubspec.yaml` 中 `version` 的构建号加一，Debug 构建沿用原编号。当前 Release 使用调试签名。 |
+| Android | `flutter build apk --release` | 发布构建将 `pubspec.yaml` 的构建号加一。正式 APK 使用独立发布密钥签名。本地未配置 `android/key.properties` 时使用开发机的调试签名。 |
 | iOS | `flutter build ios --release` | 在 macOS 上构建。Runner 最低目标为 iOS 15，真机或发布签名需在 Xcode 中配置开发团队和 Bundle ID。 |
 | macOS | `flutter build macos --release` | 在 macOS 上构建。 |
 | Windows | `flutter build windows --release` | 在 Windows 上构建。 |
