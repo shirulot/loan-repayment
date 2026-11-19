@@ -465,7 +465,6 @@ class RecentPrepayment {
   const RecentPrepayment({
     required this.id,
     this.amount = 0,
-    this.actualPrepayment,
     this.repaymentDate = '',
     this.isSettled = false,
     this.legacyMonthOffset,
@@ -473,25 +472,29 @@ class RecentPrepayment {
 
   final String id;
   final double amount;
-  final double? actualPrepayment;
   final String repaymentDate;
   final bool isSettled;
 
   /// Only used while reading the former three-month fixed-field cache.
   final int? legacyMonthOffset;
 
+  /// 只有金额、日期齐全的交易才能替代旧版按月记录，空白编辑行不参与。
+  String? get repaymentMonth {
+    if (amount <= 0) return null;
+    final date = LoanPlanConfig.parseLoanStartDate(repaymentDate);
+    return date?.toIso8601String().substring(0, 7);
+  }
+
   factory RecentPrepayment.fromJson(Map<String, dynamic> json) {
     final amount = json['amount'];
-    final actualPrepayment = json['actualPrepayment'];
+    // 旧备份可能同时保存预约本金和实还本金；迁移后仅保留最终金额。
+    final legacyActual = double.tryParse('${json['actualPrepayment']}');
     final offset = json['legacyMonthOffset'];
     return RecentPrepayment(
       id: json['id']?.toString() ?? '',
-      amount: amount is num ? amount.toDouble() : '$amount'.toDoubleOr(0),
-      actualPrepayment: actualPrepayment is num
-          ? actualPrepayment.toDouble()
-          : double.tryParse('$actualPrepayment'),
+      amount: legacyActual ?? '$amount'.toDoubleOr(0),
       repaymentDate: json['repaymentDate']?.toString() ?? '',
-      isSettled: json['isSettled'] == true,
+      isSettled: json['isSettled'] == true || legacyActual != null,
       legacyMonthOffset: offset is num
           ? offset.toInt()
           : int.tryParse('$offset'),
@@ -501,8 +504,6 @@ class RecentPrepayment {
   RecentPrepayment copyWith({
     String? id,
     double? amount,
-    double? actualPrepayment,
-    bool clearActualPrepayment = false,
     String? repaymentDate,
     bool? isSettled,
     int? legacyMonthOffset,
@@ -510,9 +511,6 @@ class RecentPrepayment {
     return RecentPrepayment(
       id: id ?? this.id,
       amount: amount ?? this.amount,
-      actualPrepayment: clearActualPrepayment
-          ? null
-          : actualPrepayment ?? this.actualPrepayment,
       repaymentDate: repaymentDate ?? this.repaymentDate,
       isSettled: isSettled ?? this.isSettled,
       legacyMonthOffset: legacyMonthOffset ?? this.legacyMonthOffset,
@@ -522,7 +520,6 @@ class RecentPrepayment {
   Map<String, Object?> toJson() => {
     'id': id,
     'amount': amount,
-    if (actualPrepayment != null) 'actualPrepayment': actualPrepayment,
     'repaymentDate': repaymentDate,
     'isSettled': isSettled,
     if (legacyMonthOffset != null) 'legacyMonthOffset': legacyMonthOffset,
@@ -556,10 +553,6 @@ class LoanPlanRow {
     required this.providentReduction,
     required this.totalReduction,
     required this.availableFunds,
-    required this.expectedPrepayment,
-    this.expectedPrepaymentFromActual = false,
-    required this.actualPrepayment,
-    required this.plannedPrepaymentDate,
     required this.effectivePrepaymentDate,
     required this.prepaymentDates,
     required this.prepaymentDetails,
@@ -599,16 +592,8 @@ class LoanPlanRow {
 
   /// Income plus extra income after subtracting payment and living cost.
   final double availableFunds;
-  final double expectedPrepayment;
 
-  /// 历史原计划缺失时，用实际提前本金回填展示。
-  final bool expectedPrepaymentFromActual;
-  final double? actualPrepayment;
-
-  /// 首页填写的单一还贷日期，同时用于计划展示与利息结转。
-  final String? plannedPrepaymentDate;
-
-  /// 与 [plannedPrepaymentDate] 保持一致，供导出和详情表直接使用。
+  /// 当月第一笔有日期的还款，全部日期保存在 prepaymentDates。
   final String? effectivePrepaymentDate;
 
   /// Every dated prepayment used by this month, in actual calculation order.
@@ -642,11 +627,6 @@ class LoanPlanRow {
     final value = totalPayment - nextMonthBasePayment;
     return isArchived ? (value * 100).round() / 100 : value;
   }
-
-  double? get difference =>
-      expectedPrepaymentFromActual || actualPrepayment == null
-      ? null
-      : actualPrepayment! - expectedPrepayment;
 }
 
 /// 在同一期限、同一历史计息口径下测算的单类贷款月供。
@@ -663,8 +643,7 @@ class LoanPrepaymentDetail {
   const LoanPrepaymentDetail({
     required this.eventId,
     required this.amount,
-    required this.expectedAmount,
-    required this.actualPrepayment,
+    required this.isRecorded,
     required this.repaymentDate,
     required this.interestDueNow,
     this.interestRecorded = true,
@@ -682,9 +661,10 @@ class LoanPrepaymentDetail {
   });
 
   final double amount;
-  final double expectedAmount;
   final String? eventId;
-  final double? actualPrepayment;
+
+  /// 录入的交易（含旧版按月记录）与自动测算共用金额，来源只用来判断状态。
+  final bool isRecorded;
   final String? repaymentDate;
   final double interestDueNow;
   final bool interestRecorded;

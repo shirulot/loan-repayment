@@ -203,9 +203,7 @@ class LoanWideOverview extends StatelessWidget {
       ),
       _LoanOverviewMetric(
         label: '最近一笔还款',
-        value: latest == null
-            ? '—'
-            : money(latest.actualPrepayment ?? latest.amount),
+        value: latest == null ? '—' : money(latest.amount),
         detail: latest?.repaymentDate ?? '暂无已到期记录',
         icon: Icons.payments_outlined,
       ),

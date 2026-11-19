@@ -65,7 +65,6 @@ void main() {
           RecentPrepayment(
             id: 'august-settled',
             amount: 5000,
-            actualPrepayment: 5000,
             repaymentDate: '2026-08-15',
             isSettled: true,
           ),
@@ -234,7 +233,7 @@ void main() {
     );
     expect(
       previewRows[1].expected,
-      '¥${formatLoanMoney(augustPlanRow.expectedPrepayment + viewModel.currentAvailablePrepayment)}',
+      '¥${formatLoanMoney(augustPlanRow.usedPrepayment)}',
     );
 
     final recentSection = find.text('最近三笔还款');
@@ -460,8 +459,7 @@ void main() {
             ),
             RecentPrepayment(
               id: 'settled',
-              amount: 5000,
-              actualPrepayment: 4200,
+              amount: 4200,
               repaymentDate: '2026-09-10',
               isSettled: true,
             ),
@@ -523,14 +521,12 @@ void main() {
           RecentPrepayment(
             id: 'september-early',
             amount: 17500,
-            actualPrepayment: 17500,
             repaymentDate: '2026-09-05',
             isSettled: true,
           ),
           RecentPrepayment(
             id: 'september-late',
             amount: 31000,
-            actualPrepayment: 31000,
             repaymentDate: '2026-09-20',
             isSettled: true,
           ),
@@ -540,7 +536,7 @@ void main() {
     addTearDown(viewModel.dispose);
 
     expect(viewModel.latestSettledPrepayment?.id, 'september-late');
-    expect(viewModel.latestSettledPrepayment?.actualPrepayment, 31000);
+    expect(viewModel.latestSettledPrepayment?.amount, 31000);
   });
 
   test(
@@ -878,7 +874,6 @@ void main() {
           RecentPrepayment(
             id: 'august-settled',
             amount: 17500,
-            actualPrepayment: 17500,
             repaymentDate: '2026-08-04',
             isSettled: true,
           ),
@@ -927,7 +922,6 @@ void main() {
             RecentPrepayment(
               id: 'august-date-missing',
               amount: 17500,
-              actualPrepayment: 17500,
               isSettled: true,
             ),
           ],
@@ -969,7 +963,6 @@ void main() {
           RecentPrepayment(
             id: 'july-settled',
             amount: 10000,
-            actualPrepayment: 10000,
             repaymentDate: '2026-07-20',
             isSettled: true,
           ),

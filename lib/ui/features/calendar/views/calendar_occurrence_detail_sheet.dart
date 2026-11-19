@@ -61,10 +61,6 @@ class CalendarOccurrenceDetailSheet extends StatelessWidget {
             const SizedBox(height: 16),
             _DetailRow('本次提前还贷', _money(prepayment.amount), emphasized: true),
             const Divider(height: 24),
-            if (!occurrence.isArchived)
-              _DetailRow('预期金额', _money(prepayment.expectedAmount)),
-            if (prepayment.actualPrepayment != null)
-              _DetailRow('实际金额', _money(prepayment.actualPrepayment!)),
             _DetailRow(
               '当日提前利息',
               prepayment.interestRecorded

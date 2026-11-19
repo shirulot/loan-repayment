@@ -18,7 +18,7 @@ class LoanPlanColumnSettings {
 class LoanPlanColumnSettingsService {
   const LoanPlanColumnSettingsService();
 
-  static const currentSchemaVersion = 3;
+  static const currentSchemaVersion = 4;
   static const _directoryName = 'loan-repayment-plans';
   static const _fileName = 'loan-plan-column-settings.json';
 

@@ -157,7 +157,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
       'monthlyLivingCost': editableNumber(config.monthlyLivingCost),
       'monthlyOtherExpense': editableNumber(config.monthlyOtherExpense),
       for (final event in _recentPrepayments) ...{
-        _recentAmountKey(event): editableNumber(_displayAmount(event)),
+        _recentAmountKey(event): editableNumber(event.amount),
         _recentDateKey(event): event.repaymentDate,
       },
     };
@@ -312,26 +312,13 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
 
   List<RecentPrepayment> _eventsFromControllers() {
     final events = _recentPrepayments.map((event) {
-      final isSettled = widget.viewModel.isRecentPrepaymentSettled(event);
-      final isCorrecting = _correctingRecentPrepaymentIds.contains(event.id);
-      final editedAmount = _zeroIfBlank(_recentAmountKey(event));
-      final keepsPlannedAmount =
-          (isSettled && !isCorrecting) ||
-          (isCorrecting && event.actualPrepayment != null);
-      final updated = event.copyWith(
-        // Explicit actual records keep their planned amount while correction
-        // mode writes the edited value to actualPrepayment below.
-        amount: keepsPlannedAmount ? event.amount : editedAmount,
+      // 控制器按交易 ID 保存，同月多笔或修改日期时只更新这一笔。
+      return event.copyWith(
+        amount: _zeroIfBlank(_recentAmountKey(event)),
         repaymentDate:
             _controllers[_recentDateKey(event)]?.text.trim() ??
             event.repaymentDate,
       );
-      if (isCorrecting && event.actualPrepayment != null) {
-        // An explicit actual amount is corrected independently from the
-        // planned amount; date-based settled events use amount directly.
-        return updated.copyWith(actualPrepayment: editedAmount);
-      }
-      return updated;
     });
     return _sortedRecentPrepayments(events);
   }
@@ -454,9 +441,6 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     _commitRecentPrepayments();
   }
 
-  double _displayAmount(RecentPrepayment event) =>
-      event.actualPrepayment ?? event.amount;
-
   List<RecentPrepayment> _sortedRecentPrepayments(
     Iterable<RecentPrepayment> source,
   ) => LoanPlanConfig.sortedRecentPrepayments(source);
@@ -468,7 +452,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
       for (final event in events) {
         _setControllerTextIfIdle(
           _recentAmountKey(event),
-          formatLoanEditableNumber(_displayAmount(event)),
+          formatLoanEditableNumber(event.amount),
         );
         _setControllerTextIfIdle(_recentDateKey(event), event.repaymentDate);
       }
@@ -640,33 +624,26 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
         endMonth.month - frequency + 1,
       );
       final periodRows = <LoanPlanRow>[];
-      var missingPastMonths = 0;
       for (var offset = 0; offset < frequency; offset++) {
         final month = DateTime(startMonth.year, startMonth.month + offset);
         final row = rowsByMonth[month];
         if (row != null) {
           periodRows.add(row);
-        } else if (month.isBefore(currentMonth)) {
-          // The full plan intentionally starts at the current month unless
-          // history exists. Fill only this unavailable past budget so the
-          // first displayed period still represents (for example) 7 + 8 月.
-          missingPastMonths++;
         }
       }
       final endRow = rowsByMonth[endMonth];
       if (endRow == null) break;
       if (_isSettledPreviewPeriod(endRow, today)) continue;
 
-      final expectedPrepayment =
-          periodRows.fold<double>(
-            0,
-            (total, row) => total + row.expectedPrepayment,
-          ) +
-          missingPastMonths * widget.viewModel.currentAvailablePrepayment;
+      // 预览汇总计划中的本金；缺少历史记录的月份不另补一笔还款。
+      final amount = periodRows.fold<double>(
+        0,
+        (total, row) => total + row.usedPrepayment,
+      );
       periods.add(
         LoanMobilePreviewPeriod(
           endMonth: endRow.month,
-          expectedPrepayment: expectedPrepayment,
+          amount: amount,
           totalBalance: endRow.totalBalance,
         ),
       );
@@ -676,15 +653,16 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
 
   /// A period whose final month is already settled moves out of the preview.
   bool _isSettledPreviewPeriod(LoanPlanRow row, DateTime today) {
-    return row.prepaymentDetails.any((detail) {
-      if (detail.actualPrepayment == null || detail.repaymentDate == null) {
-        return false;
-      }
-      final repaymentDate = LoanPlanConfig.parseLoanStartDate(
-        detail.repaymentDate!,
-      );
-      return repaymentDate != null && today.isAfter(repaymentDate);
-    });
+    return row.prepaymentDetails.isNotEmpty &&
+        row.prepaymentDetails.every((detail) {
+          if (!detail.isRecorded || detail.repaymentDate == null) {
+            return false;
+          }
+          final repaymentDate = LoanPlanConfig.parseLoanStartDate(
+            detail.repaymentDate!,
+          );
+          return repaymentDate != null && today.isAfter(repaymentDate);
+        });
   }
 
   void _handlePreviewRowTap(String month) {

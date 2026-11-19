@@ -65,7 +65,6 @@ class LoanPaymentHistory {
     required this.commercialPaymentEvidence,
     required this.providentInterestEstimated,
     required this.prepayments,
-    required this._expectedPrepaymentCents,
   });
 
   static final _monthPattern = RegExp(r'^[0-9]{4}-(0[1-9]|1[0-2])$');
@@ -77,7 +76,6 @@ class LoanPaymentHistory {
   final LoanPaymentEvidence commercialPaymentEvidence;
   final bool providentInterestEstimated;
   final List<LoanPaymentHistoryPrepayment> prepayments;
-  final int? _expectedPrepaymentCents;
 
   /// 整批校验后才允许导入，避免错误文件只覆盖一部分历史。
   static List<LoanPaymentHistory> parseList(Object? value) {
@@ -148,7 +146,6 @@ class LoanPaymentHistory {
     if (commercialBalance < 0 || providentBalance < 0) {
       throw FormatException('$month 的归还本金超过同类贷款的期初余额。');
     }
-    final expected = item['expectedPrepayment'];
     return LoanPaymentHistory._(
       month: month,
       remainingTerms: terms,
@@ -157,9 +154,6 @@ class LoanPaymentHistory {
       commercialPaymentEvidence: evidence ?? LoanPaymentEvidence.statement,
       providentInterestEstimated: estimated,
       prepayments: List.unmodifiable(prepayments),
-      expectedPrepaymentCents: expected == null
-          ? null
-          : _readCents(expected, '$month 预期提前本金'),
     );
   }
 
@@ -171,8 +165,6 @@ class LoanPaymentHistory {
     if (commercialPaymentEvidence != LoanPaymentEvidence.statement)
       'commercialPaymentEvidence': commercialPaymentEvidence.name,
     if (providentInterestEstimated) 'providentInterestEstimated': true,
-    if (_expectedPrepaymentCents case final amount?)
-      'expectedPrepayment': amount / 100,
     if (prepayments.isNotEmpty)
       'prepayments': prepayments.map((item) => item.toJson()).toList(),
   };
@@ -213,16 +205,12 @@ class LoanPaymentHistory {
       providentPrepaid += item._provident;
       totalInterest += item._interest ?? 0;
       final actual = item._commercial + item._provident;
-      final expected = prepayments.length == 1
-          ? _expectedPrepaymentCents ?? actual
-          : actual;
       details.add(
         LoanPrepaymentDetail(
           eventId: null,
           repaymentDate: item.date,
           amount: actual / 100,
-          actualPrepayment: actual / 100,
-          expectedAmount: expected / 100,
+          isRecorded: true,
           interestDueNow: (item._interest ?? 0) / 100,
           interestRecorded: item._interest != null,
           nextMonthDeferredInterest: 0,
@@ -275,12 +263,6 @@ class LoanPaymentHistory {
       ),
       totalReduction: _reduction(previous?.totalPayment, totalPayment),
       availableFunds: 0,
-      expectedPrepayment:
-          (_expectedPrepaymentCents ?? commercialPrepaid + providentPrepaid) /
-          100,
-      expectedPrepaymentFromActual: _expectedPrepaymentCents == null,
-      actualPrepayment: usedPrepayment,
-      plannedPrepaymentDate: null,
       effectivePrepaymentDate: details.firstOrNull?.repaymentDate,
       prepaymentDates: prepayments.map((item) => item.date).toList(),
       prepaymentDetails: details,

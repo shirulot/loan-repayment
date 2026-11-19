@@ -488,7 +488,7 @@ class CalendarViewModel extends ChangeNotifier {
     final readKeys = Set<String>.from(_data.readReminderKeys);
     for (final event in _loanPlanner.config.recentPrepayments) {
       final date = LoanPlanConfig.parseLoanStartDate(event.repaymentDate);
-      final amount = event.actualPrepayment ?? event.amount;
+      final amount = event.amount;
       final index = nodes.indexWhere((node) => node.prepaymentId == event.id);
       final previous = index < 0 ? null : nodes[index];
       if (date == null || amount <= 0) {

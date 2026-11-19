@@ -8,13 +8,13 @@ import 'loan_plan_gesture_detector.dart';
 class LoanMobilePreviewPeriod {
   const LoanMobilePreviewPeriod({
     required this.endMonth,
-    required this.expectedPrepayment,
+    required this.amount,
     required this.totalBalance,
   });
 
   /// The final month of this repayment period, used as its visible label.
   final String endMonth;
-  final double expectedPrepayment;
+  final double amount;
   final double totalBalance;
 }
 
@@ -81,14 +81,14 @@ class LoanMobilePreviewSection extends StatelessWidget {
             children: [
               const LoanMobilePreviewRow(
                 month: '月份',
-                expected: '预计提前\n还款额',
+                expected: '提前还款\n金额',
                 balance: '剩余\n本金',
                 header: true,
               ),
               ...periods.map(
                 (period) => LoanMobilePreviewRow(
                   month: _displayPreviewMonth(period.endMonth),
-                  expected: '¥${_money(period.expectedPrepayment)}',
+                  expected: '¥${_money(period.amount)}',
                   balance: '¥${_money(period.totalBalance)}',
                   selected: period.endMonth == highlightedMonth,
                   onTap: () => onRowTap(period.endMonth),

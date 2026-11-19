@@ -16,8 +16,7 @@ enum LoanPlanColumnKey {
   providentReduction(label: '公积金减少', header: '公积金\n减少', width: 74),
   totalPayment(label: '月供合计', header: '月供\n合计', width: 74),
   totalReduction(label: '总额减少', header: '总额\n减少', width: 74),
-  expectedPrepayment(label: '预期提前', header: '预期\n提前', width: 74),
-  actualPrepayment(label: '实际提前', header: '实际\n提前', width: 78),
+  repaymentAmount(label: '还款金额', header: '还款\n金额', width: 78),
   repaymentDate(label: '还贷日期', header: '还贷\n日期', width: 92),
   repaymentStatus(label: '还贷状态', header: '还贷\n状态', width: 70),
   prepaymentInterest(label: '当日提前利息', header: '当日\n利息', width: 78),
@@ -51,8 +50,7 @@ const defaultLoanPlanVisibleColumns = <LoanPlanColumnKey>{
   LoanPlanColumnKey.providentReduction,
   LoanPlanColumnKey.totalPayment,
   LoanPlanColumnKey.totalReduction,
-  LoanPlanColumnKey.expectedPrepayment,
-  LoanPlanColumnKey.actualPrepayment,
+  LoanPlanColumnKey.repaymentAmount,
   LoanPlanColumnKey.repaymentDate,
   LoanPlanColumnKey.repaymentStatus,
   LoanPlanColumnKey.prepaymentInterest,
@@ -173,26 +171,10 @@ class LoanPlanDisplayRow {
     late final prepaymentInterest = archivedPayment
         ? null
         : prepayment?.interestDueNow ?? row.prepaymentInterestDueNow;
-    late final actualPrepayment =
-        archivedPayment && row.prepaymentDetails.isNotEmpty
+    // 历史月供有独立展示行，提前本金只计入对应的交易行。
+    final repaymentAmount = archivedPayment
         ? null
-        : prepayment == null
-        ? row.actualPrepayment
-        : prepayment.actualPrepayment;
-    // 只有月度计划总额时集中放在月供行，避免把它重复分配给多笔交易。
-    late final hasMonthlyPlanOnly =
-        row.isArchived &&
-        !row.expectedPrepaymentFromActual &&
-        row.prepaymentDetails.length > 1;
-    late final expectedPrepayment = !row.isArchived
-        ? prepayment?.expectedAmount ?? row.expectedPrepayment
-        : archivedPayment
-        ? (row.prepaymentDetails.isEmpty || hasMonthlyPlanOnly
-              ? row.expectedPrepayment
-              : null)
-        : hasMonthlyPlanOnly
-        ? null
-        : prepayment?.expectedAmount;
+        : prepayment?.amount ?? row.usedPrepayment;
     late final repaymentDate = archivedPayment
         ? (row.commercialPayment > 0 ? '${row.month}-01' : null)
         : prepayment?.repaymentDate ?? row.effectivePrepaymentDate;
@@ -232,9 +214,11 @@ class LoanPlanDisplayRow {
       LoanPlanColumnKey.repaymentStatus => LoanPlanCellValue.text(
         row.isArchived
             ? (archivedPayment ? '正常月供' : '提前还款')
-            : actualPrepayment == null
-            ? '预定日期'
-            : '已结清',
+            : prepayment?.isRecorded == true
+            ? '已录入'
+            : row.usedPrepayment > 0
+            ? '自动测算'
+            : '正常月供',
       ),
       LoanPlanColumnKey.commercialPayment => LoanPlanCellValue.money(
         commercialPayment,
@@ -278,12 +262,9 @@ class LoanPlanDisplayRow {
           row.totalReduction,
         ),
       ),
-      LoanPlanColumnKey.expectedPrepayment => LoanPlanCellValue.money(
-        expectedPrepayment,
-      ),
-      LoanPlanColumnKey.actualPrepayment => LoanPlanCellValue.money(
-        actualPrepayment,
-        dashWhenZero: !row.isArchived,
+      LoanPlanColumnKey.repaymentAmount => LoanPlanCellValue.money(
+        repaymentAmount,
+        dashWhenZero: true,
       ),
       LoanPlanColumnKey.prepaymentInterest => LoanPlanCellValue.money(
         interestRecorded ? prepaymentInterest : null,

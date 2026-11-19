@@ -61,7 +61,7 @@ void main() {
       '2026-09': 28000,
     });
 
-    expect(rows[1].actualPrepayment, 28000);
+    expect(rows[1].usedPrepayment, 28000);
     expect(rows[1].commercialClosing, closeTo(328119.76345, 0.001));
     expect(
       rows[2].commercialOpening,
@@ -77,14 +77,12 @@ void main() {
         RecentPrepayment(
           id: 'september-early',
           amount: 17500,
-          actualPrepayment: 17500,
           repaymentDate: '2026-09-05',
           isSettled: true,
         ),
         RecentPrepayment(
           id: 'september-late',
           amount: 31000,
-          actualPrepayment: 31000,
           repaymentDate: '2026-09-20',
           isSettled: true,
         ),
@@ -96,11 +94,11 @@ void main() {
     ).calculate(eventConfig, const <String, double?>{});
 
     final september = rows.firstWhere((row) => row.month == '2026-09');
-    expect(september.actualPrepayment, 48500);
+    expect(september.usedPrepayment, 48500);
     expect(september.prepaymentDetails, hasLength(2));
     expect(september.prepaymentDetails[0].repaymentDate, '2026-09-05');
     expect(september.prepaymentDetails[1].repaymentDate, '2026-09-20');
-    expect(september.prepaymentDetails[1].actualPrepayment, 31000);
+    expect(september.prepaymentDetails[1].amount, 31000);
   });
 
   test('calculates every commercial payment on the 360-day basis', () {
@@ -112,7 +110,6 @@ void main() {
         RecentPrepayment(
           id: 'august-settled',
           amount: 17500,
-          actualPrepayment: 17500,
           repaymentDate: '2026-08-19',
           isSettled: true,
         ),
@@ -178,8 +175,8 @@ void main() {
   test('planned prepayments are rounded up to whole tens', () {
     final rows = calculator.calculate(config, {'2026-08': 17500});
 
-    for (final row in rows.skip(3)) {
-      expect(row.expectedPrepayment % 10, closeTo(0, 0.001));
+    for (final row in rows.skip(3).where((row) => row.totalBalance > 0)) {
+      expect(row.usedPrepayment % 10, closeTo(0, 0.001));
     }
   });
 
@@ -189,17 +186,14 @@ void main() {
       final rows = calculator.calculate(config, {'2026-08': 17500});
 
       expect(
-        rows[3].expectedPrepayment,
+        rows[3].usedPrepayment,
         closeTo((rows[3].availableFunds / 10).ceilToDouble() * 10, 0.001),
       );
       expect(
-        rows[4].expectedPrepayment,
+        rows[4].usedPrepayment,
         closeTo((rows[4].availableFunds / 10).ceilToDouble() * 10, 0.001),
       );
-      expect(
-        rows[4].expectedPrepayment,
-        greaterThan(rows[3].expectedPrepayment),
-      );
+      expect(rows[4].usedPrepayment, greaterThan(rows[3].usedPrepayment));
     },
   );
 
@@ -228,12 +222,12 @@ void main() {
 
     final rows = calculator.calculate(eventConfig, {'2026-08': 17500});
 
-    expect(rows[1].expectedPrepayment, 30000);
+    expect(rows[1].usedPrepayment, 30000);
     expect(
-      rows[2].expectedPrepayment,
+      rows[2].usedPrepayment,
       closeTo((rows[2].availableFunds / 10).ceilToDouble() * 10, 0.001),
     );
-    expect(rows[2].expectedPrepayment, greaterThan(17000));
+    expect(rows[2].usedPrepayment, greaterThan(17000));
   });
 
   test(
@@ -357,8 +351,7 @@ void main() {
       5,
       (index) => RecentPrepayment(
         id: 'repayment-$index',
-        amount: 1000 + index.toDouble(),
-        actualPrepayment: index == 0 ? 900 : null,
+        amount: index == 0 ? 900 : 1000 + index.toDouble(),
         isSettled: index == 0,
         repaymentDate: '2026-09-${(index + 1).toString().padLeft(2, '0')}',
       ),
@@ -400,7 +393,7 @@ void main() {
 
     expect(viewModel.config.commercialOpeningBalance, 375409.31);
     expect(viewModel.actualPrepayments['2026-09'], 28000);
-    expect(viewModel.rows[1].actualPrepayment, 28000);
+    expect(viewModel.rows[1].usedPrepayment, 28000);
     viewModel.dispose();
   });
 
@@ -571,15 +564,15 @@ void main() {
       );
       final rows = calculator.calculate(frequencyConfig, {});
 
-      expect(rows[0].expectedPrepayment, 10000);
-      expect(rows[1].expectedPrepayment, 0);
+      expect(rows[0].usedPrepayment, 10000);
+      expect(rows[1].usedPrepayment, 0);
       final accumulatedFunds = rows[1].availableFunds + rows[2].availableFunds;
       expect(
-        rows[2].expectedPrepayment,
+        rows[2].usedPrepayment,
         closeTo((accumulatedFunds / 10).ceilToDouble() * 10, 0.001),
       );
-      expect(rows[2].expectedPrepayment, greaterThan(rows[2].availableFunds));
-      expect(rows[3].expectedPrepayment, 0);
+      expect(rows[2].usedPrepayment, greaterThan(rows[2].availableFunds));
+      expect(rows[3].usedPrepayment, 0);
     },
   );
 
@@ -602,23 +595,23 @@ void main() {
           restored.copyWith(monthlySalary: salary),
           {},
         );
-        expect(rows[0].expectedPrepayment, 20000.25);
-        expect(rows[1].expectedPrepayment, 0);
-        expect(rows[2].expectedPrepayment, 0);
-        expect(rows[3].expectedPrepayment, 20000.25);
+        expect(rows[0].usedPrepayment, 20000.25);
+        expect(rows[1].usedPrepayment, 0);
+        expect(rows[2].usedPrepayment, 0);
+        expect(rows[3].usedPrepayment, 20000.25);
       }
       final monthly = calculator.calculate(
         fixed.copyWith(prepaymentFrequencyMonths: 1),
         {},
       );
       expect(
-        monthly.take(4).every((row) => row.expectedPrepayment == 20000.25),
+        monthly.take(4).every((row) => row.usedPrepayment == 20000.25),
         isTrue,
       );
       expect(monthly.last.commercialClosing, 0);
-      expect(monthly.last.expectedPrepayment, lessThan(20000.25));
+      expect(monthly.last.usedPrepayment, lessThan(20000.25));
       final actual = calculator.calculate(fixed, {'2026-08': 1234});
-      expect(actual.first.expectedPrepayment, 1234);
+      expect(actual.first.usedPrepayment, 1234);
       final dated = calculator.calculate(
         fixed.copyWith(
           recentPrepayments: const [
@@ -632,11 +625,11 @@ void main() {
         {},
       );
       expect(
-        dated.firstWhere((row) => row.month == '2026-09').expectedPrepayment,
+        dated.firstWhere((row) => row.month == '2026-09').usedPrepayment,
         5000,
       );
       expect(
-        dated.firstWhere((row) => row.month == '2026-11').expectedPrepayment,
+        dated.firstWhere((row) => row.month == '2026-11').usedPrepayment,
         20000.25,
       );
     },
@@ -653,7 +646,6 @@ void main() {
         RecentPrepayment(
           id: 'september-repayment',
           amount: 5000,
-          actualPrepayment: 5000,
           repaymentDate: '2026-09-15',
           isSettled: true,
         ),
@@ -662,8 +654,7 @@ void main() {
     final rows = calculator.calculate(frequencyConfig, {});
     final september = rows.firstWhere((row) => row.month == '2026-09');
 
-    expect(september.actualPrepayment, 5000);
-    expect(september.expectedPrepayment, 5000);
+    expect(september.usedPrepayment, 5000);
   });
 
   test(
@@ -688,11 +679,11 @@ void main() {
       final september = rows.firstWhere((row) => row.month == '2026-09');
       final october = rows.firstWhere((row) => row.month == '2026-10');
 
-      expect(rows.first.expectedPrepayment, 0);
-      expect(september.expectedPrepayment, 5000);
+      expect(rows.first.usedPrepayment, 0);
+      expect(september.usedPrepayment, 5000);
       expect(october.availableFunds, greaterThan(0));
       expect(october.totalPayment, lessThan(september.totalPayment));
-      expect(october.expectedPrepayment, 0);
+      expect(october.usedPrepayment, 0);
     },
   );
 
@@ -790,7 +781,6 @@ void main() {
         isTrue,
       );
       final actual = calculator.calculate(manual, {'2026-08': 999.25});
-      expect(actual.first.expectedPrepayment, 999.25);
       expect(actual.first.usedPrepayment, 999.25);
     },
   );
@@ -893,9 +883,9 @@ void main() {
     );
     final rows = calculator.calculate(fallbackConfig, {});
 
-    expect(rows[0].expectedPrepayment, closeTo(rows[0].availableFunds, 0.001));
+    expect(rows[0].usedPrepayment, closeTo(rows[0].availableFunds, 0.001));
     expect(
-      rows[1].expectedPrepayment,
+      rows[1].usedPrepayment,
       closeTo((rows[1].availableFunds / 10).ceilToDouble() * 10, 0.001),
     );
   });
@@ -1125,7 +1115,7 @@ void main() {
     final first = rows.first.prepaymentDetails.first;
     final second = rows.first.prepaymentDetails[1];
 
-    expect(rows.first.expectedPrepayment, 3000);
+    expect(rows.first.usedPrepayment, 3000);
     expect(rows.first.prepaymentDetails, hasLength(2));
     expect(
       rows.first.prepaymentDetails.first.interestDueNow,
@@ -1348,9 +1338,9 @@ void main() {
       expect(futureCalculator.monthAt(0), '2030-03');
       expect(futureCalculator.monthAt(1), '2030-04');
       expect(futureCalculator.monthAt(2), '2030-05');
-      expect(rows[0].expectedPrepayment, config.fixedAugustPrepayment);
-      expect(rows[1].expectedPrepayment, config.fixedSeptemberPrepayment);
-      expect(rows[2].expectedPrepayment, config.fixedOctoberPrepayment);
+      expect(rows[0].usedPrepayment, 17500);
+      expect(rows[1].usedPrepayment, config.fixedSeptemberPrepayment);
+      expect(rows[2].usedPrepayment, config.fixedOctoberPrepayment);
     },
   );
 }

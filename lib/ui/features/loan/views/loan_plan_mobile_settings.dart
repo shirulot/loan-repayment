@@ -58,10 +58,10 @@ class LoanMobileSettingsGroup extends StatelessWidget {
     return '¥${_money(balance)}';
   }
 
-  String _expectedPrepaymentSummary() {
+  String _latestPrepaymentSummary() {
     final latest = viewModel.latestPrepaymentOnOrBeforeToday;
     if (latest == null) return '暂无到期还款';
-    return '¥${_money(latest.actualPrepayment ?? latest.amount)}';
+    return '¥${_money(latest.amount)}';
   }
 
   Widget _inputField(
@@ -136,7 +136,7 @@ class LoanMobileSettingsGroup extends StatelessWidget {
         _inputField(
           '第 ${index + 1} 笔还款日期',
           'recentPrepayment-${event.id}-date',
-          suffix: isSettled ? '已结清' : '预定日期',
+          suffix: isSettled ? '已结清' : '年-月-日',
           date: true,
           enabled: fieldsEnabled,
         ),
@@ -276,7 +276,7 @@ class LoanMobileSettingsGroup extends StatelessWidget {
           LoanMobileCompactSection(
             title: recentPrepaymentTitle,
             icon: Icons.track_changes_outlined,
-            summary: _expectedPrepaymentSummary(),
+            summary: _latestPrepaymentSummary(),
             expanded: expandedSections.contains('recentPrepayments'),
             onExpansionChanged: (expanded) =>
                 onSectionExpansionChanged('recentPrepayments', expanded),

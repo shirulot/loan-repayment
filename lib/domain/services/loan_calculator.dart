@@ -128,32 +128,23 @@ class LoanCalculator {
         month,
         config.prepaymentFrequencyMonths,
       );
-      final hasExplicitPrepayment =
-          scheduledPrepayments.isNotEmpty || legacyActualPrepayment != null;
-      double requestedPrepayment;
-      if (scheduledPrepayments.isNotEmpty) {
-        // A dated recent repayment is an explicit event and therefore wins
-        // over the planning interval, including when it falls between two
-        // planned frequency months.
-        requestedPrepayment = scheduledPrepayments.fold<double>(
-          0,
-          (total, item) => total + item.amount,
-        );
-        accumulatedAvailableFunds = 0;
-      } else if (legacyActualPrepayment != null &&
-          (config.isFixedPrepaymentMode || config.isPlanRepaymentMode)) {
-        // 定额和手动模式只安排预计金额，已录入的实际金额保持权威。
-        requestedPrepayment = math.max(0.0, legacyActualPrepayment);
-        accumulatedAvailableFunds = 0;
-      } else if (legacyActualPrepayment != null) {
-        // Legacy month-keyed actual records remain authoritative during the
-        // transition to event-based recent repayment data.
-        final expectedAmount = hasRecentPrepayments
-            ? 0.0
-            : _expectedPrepaymentForIndex(scheduleIndex, config);
-        requestedPrepayment = expectedAmount > 0
-            ? expectedAmount
-            : math.max(0.0, availableFunds);
+      // 无法唯一拆分的旧版月扣款保留原金额和原先采用的首笔日期。
+      final prepayments = legacyActualPrepayment == null
+          ? scheduledPrepayments
+          : [
+              _ScheduledPrepayment(
+                amount: math.max(0.0, legacyActualPrepayment),
+                repaymentDate:
+                    scheduledPrepayments.firstOrNull?.repaymentDate ??
+                    _validPrepaymentDate(
+                      _plannedPrepaymentDate(scheduleIndex, config),
+                      month,
+                    ),
+                isRecorded: true,
+              ),
+            ];
+      double requestedPrepayment = 0;
+      if (prepayments.isNotEmpty) {
         accumulatedAvailableFunds = 0;
       } else if (config.isFixedPrepaymentMode) {
         // 每个周期使用同一笔手填金额，不累加现金流，也不倍乘间隔月数。
@@ -186,40 +177,12 @@ class LoanCalculator {
           math.max(0.0, providentOpening - providentPrincipal).toDouble();
       // 自动增量按十元向上取整；手填定额和还款记录保留原金额。
       // 各模式均按剩余本金封顶，避免最后一笔出现负余额。
-      final expectedPrepayment =
-          scheduledPrepayments.isNotEmpty ||
-              config.isFixedPrepaymentMode ||
-              config.isPlanRepaymentMode
-          ? math
-                .min(requestedPrepayment, remainingAfterNormalPayment)
-                .toDouble()
-          : _roundUpToTen(
-              math
-                  .min(requestedPrepayment, remainingAfterNormalPayment)
-                  .toDouble(),
-            );
-      // Each dated event owns its actual amount. The old month-keyed value is
-      // only retained for imported backups that predate event-based records.
-      final eventActualPrepayment = scheduledPrepayments
-          .where((prepayment) => prepayment.actualPrepayment != null)
-          .fold<double>(0, (total, prepayment) => total + prepayment.amount);
-      final actualPrepayment =
-          legacyActualPrepayment ??
-          (eventActualPrepayment > 0 ? eventActualPrepayment : null);
-      final prepayments = legacyActualPrepayment == null
-          ? scheduledPrepayments
-          : <_ScheduledPrepayment>[
-              _ScheduledPrepayment(
-                amount: math.max(0.0, legacyActualPrepayment),
-                actualPrepayment: math.max(0.0, legacyActualPrepayment),
-                repaymentDate: scheduledPrepayments.isEmpty
-                    ? _validPrepaymentDate(
-                        _plannedPrepaymentDate(scheduleIndex, config),
-                        month,
-                      )
-                    : scheduledPrepayments.first.repaymentDate,
-              ),
-            ];
+      final automaticAmount = math.min(
+        remainingAfterNormalPayment,
+        config.isFixedPrepaymentMode || config.isPlanRepaymentMode
+            ? requestedPrepayment
+            : _roundUpToTen(requestedPrepayment),
+      );
       final hasMultiplePrepayments = prepayments.length > 1;
       // 同月多笔由第一笔明细扣除唯一一次当期月供，避免月度行重复扣款。
       final normalPaymentAppliedInPlanRow =
@@ -227,7 +190,7 @@ class LoanCalculator {
       final appliedPrepayments = _applyPrepayments(
         prepayments: prepayments.isEmpty
             ? <_ScheduledPrepayment>[
-                _ScheduledPrepayment(amount: expectedPrepayment),
+                _ScheduledPrepayment(amount: automaticAmount),
               ]
             : prepayments,
         commercialBalance: math
@@ -252,13 +215,6 @@ class LoanCalculator {
         applyTransferInterest: applyTransferInterest,
         config: config,
       );
-      final hasPlannedPrepayment =
-          hasExplicitPrepayment || expectedPrepayment > 0;
-      final plannedPrepaymentDate = scheduledPrepayments.isEmpty
-          ? hasPlannedPrepayment
-                ? _plannedPrepaymentDate(scheduleIndex, config)
-                : null
-          : scheduledPrepayments.first.repaymentDate;
       final effectivePrepaymentDate = appliedPrepayments.dates.isEmpty
           ? null
           : appliedPrepayments.dates.first;
@@ -312,9 +268,6 @@ class LoanCalculator {
           providentReduction: providentReduction,
           totalReduction: totalReduction,
           availableFunds: availableFunds,
-          expectedPrepayment: expectedPrepayment,
-          actualPrepayment: actualPrepayment,
-          plannedPrepaymentDate: plannedPrepaymentDate,
           effectivePrepaymentDate: effectivePrepaymentDate,
           prepaymentDates: appliedPrepayments.dates,
           prepaymentDetails: appliedPrepayments.details,
@@ -383,7 +336,7 @@ class LoanCalculator {
     for (final event in config.recentPrepayments) {
       consider(
         LoanPlanConfig.parseLoanStartDate(event.repaymentDate),
-        event.actualPrepayment,
+        event.amount,
       );
     }
     return startDate;
@@ -511,10 +464,7 @@ class LoanCalculator {
 
   bool _hasRecentPrepayments(LoanPlanConfig config) {
     return config.recentPrepayments.any(
-      (event) =>
-          event.amount > 0 ||
-          event.actualPrepayment != null ||
-          event.repaymentDate.trim().isNotEmpty,
+      (event) => event.amount > 0 || event.repaymentDate.trim().isNotEmpty,
     );
   }
 
@@ -557,9 +507,8 @@ class LoanCalculator {
         prepayments.add(
           _ScheduledPrepayment(
             eventId: event.id,
-            amount: event.actualPrepayment ?? event.amount,
-            expectedAmount: event.amount,
-            actualPrepayment: event.actualPrepayment,
+            amount: event.amount,
+            isRecorded: true,
             repaymentDate: dated,
           ),
         );
@@ -695,8 +644,7 @@ class LoanCalculator {
           LoanPrepaymentDetail(
             eventId: prepayment.eventId,
             amount: used,
-            expectedAmount: prepayment.expectedAmount ?? used,
-            actualPrepayment: prepayment.actualPrepayment == null ? null : used,
+            isRecorded: prepayment.isRecorded,
             repaymentDate: date,
             interestDueNow: commercialInterestDueNow + providentInterestDueNow,
             // 提前还款日利息单独结算，不能叠加到下一期常规月供。
@@ -804,15 +752,13 @@ class _ScheduledPrepayment {
   const _ScheduledPrepayment({
     required this.amount,
     this.eventId,
-    this.expectedAmount,
-    this.actualPrepayment,
+    this.isRecorded = false,
     this.repaymentDate,
   });
 
   final double amount;
   final String? eventId;
-  final double? expectedAmount;
-  final double? actualPrepayment;
+  final bool isRecorded;
   final String? repaymentDate;
 }
 

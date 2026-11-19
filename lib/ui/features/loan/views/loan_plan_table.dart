@@ -194,10 +194,10 @@ class LoanPlanTable extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final settled =
         column == LoanPlanColumnKey.repaymentStatus &&
-        displayRow.valueFor(LoanPlanColumnKey.actualPrepayment).amount != null;
+        displayRow.prepayment?.isRecorded == true;
     final color = switch (column) {
       LoanPlanColumnKey.totalReduction ||
-      LoanPlanColumnKey.expectedPrepayment ||
+      LoanPlanColumnKey.repaymentAmount ||
       LoanPlanColumnKey.nextMonthBasePayment => colors.primary,
       LoanPlanColumnKey.nextMonthBaseReduction =>
         value.amount == null ? colors.onSurfaceVariant : colors.primary,
@@ -209,7 +209,7 @@ class LoanPlanTable extends StatelessWidget {
         value.amount == 0 ? colors.onSurfaceVariant : colors.tertiary,
       _ => null,
     };
-    final cell = textCell(
+    return textCell(
       value.display(amountsMasked),
       align:
           column == LoanPlanColumnKey.gregorianMonth ||
@@ -224,15 +224,6 @@ class LoanPlanTable extends StatelessWidget {
           column == LoanPlanColumnKey.totalReduction && value.amount != null,
       color: color,
     );
-    if (column == LoanPlanColumnKey.expectedPrepayment) {
-      return Tooltip(
-        message: displayRow.row.expectedPrepaymentFromActual
-            ? '缺历史原计划，按实还本金回填'
-            : '',
-        child: cell,
-      );
-    }
-    return cell;
   }
 
   static Widget headerCell(

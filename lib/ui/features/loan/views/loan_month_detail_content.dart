@@ -29,11 +29,6 @@ class LoanMonthDetailContent extends StatelessWidget {
     return _money(value);
   }
 
-  String _date(String? value) {
-    if (amountsMasked) return '****';
-    return value == null || value.isBlank ? '—' : value;
-  }
-
   LoanDetailItem _moneyItem(String label, double value) =>
       LoanDetailItem(label, _money(value));
 
@@ -56,10 +51,10 @@ class LoanMonthDetailContent extends StatelessWidget {
         : row.prepaymentDates.join('、');
     final repaymentStatus = row.isArchived
         ? '历史账单'
-        : row.actualPrepayment != null
-        ? '已录入实际提前还款'
+        : row.prepaymentDetails.any((detail) => detail.isRecorded)
+        ? '已录入还款'
         : row.prepaymentDetails.isNotEmpty
-        ? '有预约或预测提前还款'
+        ? '自动测算'
         : '本月无提前还款';
 
     return SingleChildScrollView(
@@ -76,12 +71,7 @@ class LoanMonthDetailContent extends StatelessWidget {
               LoanDetailItem('农历月份', formatLoanLunarMonth(row.month)),
               LoanDetailItem('剩余期数', '${row.remainingTerms} 期'),
               LoanDetailItem('还款状态', repaymentStatus),
-              LoanDetailItem('计划还贷日期', _date(row.plannedPrepaymentDate)),
-              LoanDetailItem('生效还贷日期', _date(row.effectivePrepaymentDate)),
-              LoanDetailItem(
-                '实际生效日期',
-                amountsMasked ? '****' : prepaymentDates,
-              ),
+              LoanDetailItem('还款日期', amountsMasked ? '****' : prepaymentDates),
             ],
           ),
           LoanDetailCard(
@@ -152,20 +142,13 @@ class LoanMonthDetailContent extends StatelessWidget {
                     .amount,
               ),
               if (!row.isArchived) _moneyItem('可供提前还贷额', row.availableFunds),
-              _moneyItem(
-                row.expectedPrepaymentFromActual ? '预期提前还款（实还回填）' : '预期提前还款',
-                row.expectedPrepayment,
-              ),
-              _optionalMoneyItem('实际提前还款', row.actualPrepayment),
-              if (!row.expectedPrepaymentFromActual)
-                _optionalMoneyItem('实际与预期差额', row.difference),
             ],
           ),
           LoanDetailCard(
             title: '提前还款汇总',
             icon: Icons.savings_outlined,
             items: [
-              _moneyItem('实际使用提前还款', row.usedPrepayment),
+              _moneyItem('还款金额', row.usedPrepayment),
               _moneyItem('其中商贷提前还款', row.commercialPrepayment),
               _moneyItem('其中公积金提前还款', row.providentPrepayment),
               if (row.prepaymentInterestRecorded)
@@ -265,9 +248,7 @@ class LoanPrepaymentDetailCard extends StatelessWidget {
         if (detail.eventId != null && detail.eventId!.isNotEmpty)
           LoanDetailItem('事件编号', detail.eventId!),
         LoanDetailItem('还贷日期', _date(detail.repaymentDate)),
-        _moneyItem('本次使用金额', detail.amount),
-        if (!isArchived) _moneyItem('预期金额', detail.expectedAmount),
-        _optionalMoneyItem('实际金额', detail.actualPrepayment),
+        _moneyItem('还款金额', detail.amount),
         if (detail.interestRecorded)
           _moneyItem('当日提前利息', detail.interestDueNow)
         else

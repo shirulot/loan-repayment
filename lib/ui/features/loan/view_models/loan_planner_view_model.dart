@@ -84,7 +84,7 @@ class LoanPlannerViewModel extends ChangeNotifier {
 
   /// 预约还款从还款日的下一天开始视为已结清；显式状态仍优先。
   bool isRecentPrepaymentSettled(RecentPrepayment event) {
-    if (event.isSettled || event.actualPrepayment != null) return true;
+    if (event.isSettled) return true;
     if (event.amount <= 0) return false;
 
     final repaymentDate = LoanPlanConfig.parseLoanStartDate(
@@ -215,9 +215,10 @@ class LoanPlannerViewModel extends ChangeNotifier {
       final date = LoanPlanConfig.parseLoanStartDate(
         detail.repaymentDate ?? '',
       );
-      final isActual = detail.actualPrepayment != null;
+      // 仅旧版按月实还可能缺少日期；有日期的交易在还款日计入当前余额。
+      final undatedRecord = detail.isRecorded && date == null;
       final isDue = date != null && !date.isAfter(today);
-      if (!isActual && !isDue) continue;
+      if (!undatedRecord && !isDue) continue;
 
       // The first detail applies the month's normal payment before its own
       // prepayment. Later payment values are display-only previews.
@@ -245,17 +246,15 @@ class LoanPlannerViewModel extends ChangeNotifier {
   List<RecentPrepayment> get settledPrepaymentCandidates {
     final candidates = <RecentPrepayment>[
       for (final event in _config.recentPrepayments)
-        if (event.actualPrepayment != null &&
-            event.actualPrepayment! > 0 &&
+        if (isRecentPrepaymentSettled(event) &&
+            event.amount > 0 &&
             LoanPlanConfig.parseLoanStartDate(event.repaymentDate) != null)
           event.copyWith(isSettled: true),
     ];
     // Old backups recorded a single actual amount for a whole month. Keep them
     // readable, but never use this fallback for event-based repayment data:
     // multiple transactions in one month must be ordered by their dates.
-    final eventMonths = candidates
-        .map((event) => event.repaymentDate.substring(0, 7))
-        .toSet();
+    final eventMonths = candidates.map((event) => event.repaymentMonth).toSet();
     for (final row in _rows) {
       if (eventMonths.contains(row.month)) continue;
       final amount = _actualPrepayments[row.month];
@@ -300,10 +299,9 @@ class LoanPlannerViewModel extends ChangeNotifier {
         latestDate = date;
         latest = RecentPrepayment(
           id: detail.eventId ?? '${row.month}-${detail.repaymentDate}',
-          amount: detail.expectedAmount,
-          actualPrepayment: detail.actualPrepayment,
+          amount: detail.amount,
           repaymentDate: detail.repaymentDate!,
-          isSettled: detail.actualPrepayment != null,
+          isSettled: detail.isRecorded,
         );
       }
     }
@@ -374,6 +372,10 @@ class LoanPlannerViewModel extends ChangeNotifier {
   Map<String, double> get calculatorReferenceValues => Map.unmodifiable({
     for (final reference in calculatorReferences)
       reference.label: reference.value,
+    // 保留旧版已保存算式的引用名称，引用列表只展示合并后的还款金额。
+    for (final row in _rows)
+      for (final oldLabel in const ['预期提前', '预期提前（实还回填）', '实际提前'])
+        '${row.month} $oldLabel': row.usedPrepayment,
   });
 
   /// Matches visible labels and month aliases such as `8月` and `八月`.
@@ -414,11 +416,7 @@ class LoanPlannerViewModel extends ChangeNotifier {
       add('公积金减少', row.providentReduction);
       add('月供合计', row.totalPayment);
       add('总额减少', row.totalReduction);
-      add(
-        row.expectedPrepaymentFromActual ? '预期提前（实还回填）' : '预期提前',
-        row.expectedPrepayment,
-      );
-      add('实际提前', row.actualPrepayment);
+      add('还款金额', row.usedPrepayment);
       if (row.prepaymentInterestRecorded) {
         add('当日提前利息', row.prepaymentInterestDueNow);
       }
@@ -540,28 +538,24 @@ class LoanPlannerViewModel extends ChangeNotifier {
     LoanPlanConfig config, {
     LoanInitialBalance? initialBalance,
   }) {
+    // 只在该月的逐笔金额或日期确实更改时，用用户更正后的记录替代旧月合计。
+    if (_actualPrepayments.isNotEmpty &&
+        !identical(_config.recentPrepayments, config.recentPrepayments)) {
+      Map<String, (String, double)> entriesFor(
+        LoanPlanConfig plan,
+        String month,
+      ) => {
+        for (final event in plan.recentPrepayments)
+          if (event.repaymentMonth == month)
+            event.id: (event.repaymentDate, event.amount),
+      };
+      _actualPrepayments.removeWhere(
+        (month, _) =>
+            !mapEquals(entriesFor(_config, month), entriesFor(config, month)),
+      );
+    }
     _recordedInitialBalance = initialBalance ?? _recordedInitialBalance;
     _config = config;
-    _recalculate();
-    _persist();
-  }
-
-  /// Records the actual principal for one event without changing other events
-  /// that happen to share the same calendar month.
-  void updateRecentPrepaymentActual(String eventId, double? value) {
-    _config = _config.copyWith(
-      recentPrepayments: _config.recentPrepayments
-          .map(
-            (event) => event.id == eventId
-                ? event.copyWith(
-                    actualPrepayment: value,
-                    clearActualPrepayment: value == null,
-                    isSettled: value != null,
-                  )
-                : event,
-          )
-          .toList(growable: false),
-    );
     _recalculate();
     _persist();
   }

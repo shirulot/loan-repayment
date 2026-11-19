@@ -89,7 +89,13 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
     }
     if (savedSettings.schemaVersion <
         LoanPlanColumnSettingsService.currentSchemaVersion) {
-      restoredColumns.add(LoanPlanColumnKey.actualPrepayment);
+      // 旧版任一金额列可见时，继承到合并后的还款金额列。
+      if (savedSettings.schemaVersion < 3 ||
+          savedSettings.visibleColumns.any(
+            const {'expectedPrepayment', 'actualPrepayment'}.contains,
+          )) {
+        restoredColumns.add(LoanPlanColumnKey.repaymentAmount);
+      }
       unawaited(
         _columnSettingsService.save(
           restoredColumns.map((column) => column.name),
@@ -399,7 +405,7 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
         // 矮横屏与键盘弹出时，把列设置收进标题栏，优先保留表格高度。
         final compactHeader = widget.embedded && constraints.maxHeight < 360;
         final tableHint = widget.viewModel.paymentHistory.isEmpty
-            ? '实际提前金额仅填本金；利息按当月实际天数计算，剩余天数利息结转下月。'
+            ? '在首页「最近三笔还款」填写金额和日期即可记录，还款金额只含本金。'
             : '历史月供行显示当期月供，历史提前还款行显示本笔扣款后的月供测算。';
         final minimumTableWidth = LoanPlanTable.minimumWidth(
           visibleColumns: _visibleColumns,

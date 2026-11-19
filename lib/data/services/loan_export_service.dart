@@ -81,14 +81,12 @@ class LoanExportService {
     '公积金减少额',
     '本月月供总额',
     '总减少额',
-    '预期提前还款',
+    '还款金额',
     '还贷日期',
-    '实际提前还款',
     '当日提前利息',
     '下月基础月供',
     '转息差额',
     '基础月供减少额',
-    '差额',
     '商贷余额',
     '公积金余额',
     '本金总额',
@@ -98,7 +96,6 @@ class LoanExportService {
     '公积金期初本金',
     '公积金月供本金',
     '公积金月供利息',
-    '预期提前来源',
   ];
 
   List<Object?> _tabularValues(LoanPlanRow row) => [
@@ -109,14 +106,12 @@ class LoanExportService {
     row.providentReduction,
     row.totalPayment,
     row.totalReduction,
-    row.expectedPrepayment,
-    row.effectivePrepaymentDate,
-    row.actualPrepayment,
+    row.usedPrepayment,
+    row.prepaymentDates.join('、'),
     row.prepaymentInterestRecorded ? row.prepaymentInterestDueNow : null,
     row.nextMonthBasePayment,
     row.transferDifference,
     row.nextMonthBasePaymentReduction,
-    row.difference,
     row.commercialClosing,
     row.providentClosing,
     row.totalBalance,
@@ -126,9 +121,6 @@ class LoanExportService {
     row.providentOpening,
     row.providentPrincipal,
     row.providentInterest,
-    row.isArchived
-        ? (row.expectedPrepaymentFromActual ? '实还回填' : '历史原计划')
-        : null,
   ];
 
   String _csvContent(LoanPlanConfig config, List<LoanPlanRow> rows) {
@@ -185,24 +177,12 @@ td{padding:6px;border:1px solid #d9e2f3;text-align:right} td:first-child{text-al
       'providentReduction': row.providentReduction,
       'totalPayment': row.totalPayment,
       'totalReduction': row.totalReduction,
-      'expectedPrepayment': row.expectedPrepayment,
-      if (row.expectedPrepaymentFromActual)
-        'expectedPrepaymentFromActual': true,
-      'actualPrepayment': row.actualPrepayment,
-      'plannedPrepaymentDate': row.plannedPrepaymentDate,
-      'effectivePrepaymentDate': row.effectivePrepaymentDate,
+      'repaymentAmount': row.usedPrepayment,
       'prepaymentDates': row.prepaymentDates,
       'prepaymentDetails': row.prepaymentDetails
           .map(
             (detail) => <String, Object?>{
               'amount': detail.amount,
-              'expectedAmount':
-                  row.isArchived &&
-                      !row.expectedPrepaymentFromActual &&
-                      row.prepaymentDetails.length > 1
-                  ? null
-                  : detail.expectedAmount,
-              'actualPrepayment': detail.actualPrepayment,
               'repaymentDate': detail.repaymentDate,
               'interestDueNow': detail.interestRecorded
                   ? detail.interestDueNow
@@ -227,7 +207,6 @@ td{padding:6px;border:1px solid #d9e2f3;text-align:right} td:first-child{text-al
       'nextMonthBasePayment': row.nextMonthBasePayment,
       'transferDifference': row.transferDifference,
       'nextMonthBasePaymentReduction': row.nextMonthBasePaymentReduction,
-      'difference': row.difference,
       'commercialBalance': row.commercialClosing,
       'providentBalance': row.providentClosing,
       'totalBalance': row.totalBalance,

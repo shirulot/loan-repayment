@@ -43,6 +43,25 @@ class LoanCachedState {
         }
       }
     }
+    var config = LoanPlanConfig.fromJson(Map<String, dynamic>.from(configJson));
+    if (actualPrepayments.isNotEmpty && config.recentPrepayments.isNotEmpty) {
+      final rawRecords = configJson['recentPrepayments'];
+      final recordedIds = rawRecords is List
+          ? rawRecords
+                .whereType<Map>()
+                .where(
+                  (record) =>
+                      double.tryParse('${record['actualPrepayment']}') != null,
+                )
+                .map((record) => record['id']?.toString())
+                .toSet()
+          : const <String?>{};
+      config = _mergeLegacyMonthlyAmounts(
+        config,
+        actualPrepayments,
+        recordedIds,
+      );
+    }
     final temporaryCalculatorResults = <double>[];
     final temporaryJson = json['temporaryCalculatorResults'];
     if (temporaryJson is List) {
@@ -61,7 +80,7 @@ class LoanCachedState {
     }
     final initialBalance = json['initialBalance'] ?? json['historicalOpening'];
     return LoanCachedState(
-      config: LoanPlanConfig.fromJson(Map<String, dynamic>.from(configJson)),
+      config: config,
       actualPrepayments: actualPrepayments,
       paymentHistory: json.containsKey('paymentHistory')
           ? LoanPaymentHistory.parseList(json['paymentHistory'])
@@ -73,6 +92,43 @@ class LoanCachedState {
       temporaryCalculatorResults: temporaryCalculatorResults,
       temporaryCalculatorExpressions: temporaryCalculatorExpressions,
     );
+  }
+
+  /// 旧版按月覆盖值只迁移一次，避免更正日期后，旧月份重新出现同一笔。
+  static LoanPlanConfig _mergeLegacyMonthlyAmounts(
+    LoanPlanConfig config,
+    Map<String, double?> monthlyAmounts,
+    Set<String?> recordedIds,
+  ) {
+    final records = [...config.recentPrepayments];
+    final indexesByMonth = <String, List<int>>{};
+    for (final (index, record) in records.indexed) {
+      final month = record.repaymentMonth;
+      if (month == null) continue;
+      (indexesByMonth[month] ??= []).add(index);
+    }
+    for (final entry in indexesByMonth.entries) {
+      final monthly = monthlyAmounts[entry.key];
+      if (monthly == null) continue;
+      if (entry.value.length == 1) {
+        final index = entry.value.single;
+        if (!recordedIds.contains(records[index].id)) {
+          records[index] = records[index].copyWith(
+            amount: monthly,
+            isSettled: true,
+          );
+        }
+      } else {
+        // 多笔旧预约与实还总数对不上时，保留原月扣款，等待用户更正明细。
+        final total = entry.value.fold<double>(
+          0,
+          (sum, index) => sum + records[index].amount,
+        );
+        if ((total - monthly).abs() >= 0.005) continue;
+      }
+      monthlyAmounts.remove(entry.key);
+    }
+    return config.copyWith(recentPrepayments: records);
   }
 
   /// Keeps export and cache formats aligned for reliable backup restoration.
