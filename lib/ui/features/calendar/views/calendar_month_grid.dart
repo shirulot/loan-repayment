@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'calendar_layout_style.dart';
+import 'calendar_month_pager.dart';
 
 class CalendarMonthGrid extends StatelessWidget {
   const CalendarMonthGrid({
@@ -15,8 +16,7 @@ class CalendarMonthGrid extends StatelessWidget {
     required this.isWorkday,
     required this.holidayName,
     required this.onDateSelected,
-    required this.onPreviousMonth,
-    required this.onNextMonth,
+    required this.onMonthChanged,
     required this.onToday,
     this.monthHeadingKey,
     this.showHeading = true,
@@ -32,8 +32,7 @@ class CalendarMonthGrid extends StatelessWidget {
   final bool Function(DateTime) isWorkday;
   final String? Function(DateTime) holidayName;
   final ValueChanged<DateTime> onDateSelected;
-  final VoidCallback onPreviousMonth;
-  final VoidCallback onNextMonth;
+  final ValueChanged<DateTime> onMonthChanged;
   final VoidCallback onToday;
   final Key? monthHeadingKey;
   final bool showHeading;
@@ -50,9 +49,6 @@ class CalendarMonthGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final firstDay = DateTime(month.year, month.month, 1);
-    final startOffset = firstDay.weekday - DateTime.monday;
     // Enlarged accessibility text needs taller dates; the surrounding pane
     // remains scrollable instead of clipping holiday labels or event dots.
     final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
@@ -81,12 +77,14 @@ class CalendarMonthGrid extends StatelessWidget {
               ),
               IconButton(
                 tooltip: '上个月',
-                onPressed: onPreviousMonth,
+                onPressed: () =>
+                    onMonthChanged(DateUtils.addMonthsToMonthDate(month, -1)),
                 icon: const Icon(Icons.chevron_left),
               ),
               IconButton(
                 tooltip: '下个月',
-                onPressed: onNextMonth,
+                onPressed: () =>
+                    onMonthChanged(DateUtils.addMonthsToMonthDate(month, 1)),
                 icon: const Icon(Icons.chevron_right),
               ),
             ],
@@ -104,56 +102,61 @@ class CalendarMonthGrid extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 4),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final cellWidth = constraints.maxWidth / 7;
-            return GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: fitMonthRows ? weekCount(month) * 7 : 42,
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 7,
-                childAspectRatio: cellWidth / effectiveCellHeight,
-              ),
-              itemBuilder: (context, index) {
-                final day = DateTime(
-                  month.year,
-                  month.month,
-                  index - startOffset + 1,
-                );
-                final isCurrentMonth = day.month == month.month;
-                final isSelected = _isSameDay(day, selectedDate);
-                final isToday = _isSameDay(day, today);
-                final hasDayEvents = hasEvents(day);
-                final hasUnreadEvents = hasUnread(day);
-                final workday = isWorkday(day);
-                return _CalendarDayCell(
-                  date: day,
-                  isWorkday: workday,
-                  holidayName: holidayName(day),
-                  isCurrentMonth: isCurrentMonth,
-                  isSelected: isSelected,
-                  isToday: isToday,
-                  hasEvents: hasDayEvents,
-                  hasUnread: hasUnreadEvents,
-                  onTap: () => onDateSelected(day),
-                  selectedColor: colors.primary,
-                  selectedTextColor: colors.onPrimary,
-                  todayBorderColor: colors.primary,
-                  mutedTextColor: colors.onSurfaceVariant.withValues(
-                    alpha: 0.46,
-                  ),
-                  holidayTextColor: colors.onSurfaceVariant,
-                  eventColor: colors.tertiary,
-                  unreadColor: colors.error,
-                  restColor: colors.error,
-                  adjustedWorkColor: colors.tertiary,
-                );
-              },
-            );
-          },
+        SizedBox(
+          height: (fitMonthRows ? weekCount(month) : 6) * effectiveCellHeight,
+          child: CalendarMonthPager(
+            month: month,
+            onMonthChanged: onMonthChanged,
+            monthBuilder: (context, pageMonth) =>
+                _buildDates(context, pageMonth, effectiveCellHeight),
+          ),
         ),
       ],
+    );
+  }
+
+  // 拖动时相邻两页同时可见，每页按自己的月份生成日期和事件标记。
+  Widget _buildDates(BuildContext context, DateTime month, double cellHeight) {
+    final colors = Theme.of(context).colorScheme;
+    final startOffset = month.weekday - DateTime.monday;
+    return GridView.builder(
+      primary: false,
+      padding: EdgeInsets.zero,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: fitMonthRows ? weekCount(month) * 7 : 42,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 7,
+        mainAxisExtent: cellHeight,
+      ),
+      itemBuilder: (context, index) {
+        final day = DateTime(month.year, month.month, index - startOffset + 1);
+        final isCurrentMonth = day.month == month.month;
+        final isSelected = _isSameDay(day, selectedDate);
+        final isToday = _isSameDay(day, today);
+        final hasDayEvents = hasEvents(day);
+        final hasUnreadEvents = hasUnread(day);
+        final workday = isWorkday(day);
+        return _CalendarDayCell(
+          date: day,
+          isWorkday: workday,
+          holidayName: holidayName(day),
+          isCurrentMonth: isCurrentMonth,
+          isSelected: isSelected,
+          isToday: isToday,
+          hasEvents: hasDayEvents,
+          hasUnread: hasUnreadEvents,
+          onTap: () => onDateSelected(day),
+          selectedColor: colors.primary,
+          selectedTextColor: colors.onPrimary,
+          todayBorderColor: colors.primary,
+          mutedTextColor: colors.onSurfaceVariant.withValues(alpha: 0.46),
+          holidayTextColor: colors.onSurfaceVariant,
+          eventColor: colors.tertiary,
+          unreadColor: colors.error,
+          restColor: colors.error,
+          adjustedWorkColor: colors.tertiary,
+        );
+      },
     );
   }
 

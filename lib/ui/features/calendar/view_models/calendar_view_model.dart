@@ -108,7 +108,7 @@ class CalendarViewModel extends ChangeNotifier {
   final ChineseWorkdayCalendar _workdayCalendar;
   final DateTime Function() _now;
   CalendarData _data;
-  Map<String, LoanPlanRow> _archivedRows = const {};
+  Map<String, LoanPlanRow> _rowsByMonth = const {};
   ChineseHolidayCalendarSnapshot _holidaySnapshot;
   bool _isHolidayDataRefreshing = false;
   bool _isInitializing = true;
@@ -152,7 +152,7 @@ class CalendarViewModel extends ChangeNotifier {
       // A date near month-end can settle in the following month.
       for (var offset = -2; offset <= 0; offset++) {
         final anchor = DateTime(day.year, day.month + offset, 1);
-        if (_isArchivedPayment(rule, anchor)) continue;
+        if (_skipMonthlyOccurrence(rule, anchor)) continue;
         final occurrence = _ruleOccurrence(rule, anchor.year, anchor.month);
         if (occurrence.isBefore(rule.createdAt) ||
             !_isSameDay(occurrence, day)) {
@@ -190,9 +190,9 @@ class CalendarViewModel extends ChangeNotifier {
   /// 历史事项从计划表实时派生，无需复制成可编辑提醒或写入日历缓存。
   List<CalendarDayOccurrence> _archivedOccurrencesOn(DateTime day) {
     final occurrences = <CalendarDayOccurrence>[];
-    if (_archivedRows.isEmpty) return occurrences;
-    final row = _archivedRows[_monthKey(day)];
-    if (row != null) {
+    if (_loanPlanner.paymentHistory.isEmpty) return occurrences;
+    final row = _rowsByMonth[_monthKey(day)];
+    if (row != null && row.isArchived) {
       for (final (index, detail) in row.prepaymentDetails.indexed) {
         // 有首页事件身份的补录由普通日历节点负责，包括未来日期的提醒。
         if (!detail.fromStatement && detail.eventId != null) continue;
@@ -227,8 +227,8 @@ class CalendarViewModel extends ChangeNotifier {
           );
       for (var offset = -2; offset <= 0; offset++) {
         final anchor = DateTime(day.year, day.month + offset);
-        final bill = _archivedRows[_monthKey(anchor)];
-        if (bill == null) continue;
+        final bill = _rowsByMonth[_monthKey(anchor)];
+        if (bill == null || !bill.isArchived) continue;
         final commercial = type == CalendarMonthlyRuleType.commercialPayment;
         if ((commercial ? bill.commercialPayment : bill.providentPayment) <=
             0) {
@@ -284,17 +284,37 @@ class CalendarViewModel extends ChangeNotifier {
     );
   }
 
-  bool _isArchivedPrepayment(CalendarNode node) =>
-      node.source == CalendarNodeSource.prepayment &&
-      (_archivedRows[_monthKey(node.dateTime)]?.prepaymentDetails.any(
-            (detail) =>
-                detail.fromStatement && detail.eventId == node.prepaymentId,
-          ) ??
-          false);
+  bool _isArchivedPrepayment(CalendarNode node) {
+    if (node.source != CalendarNodeSource.prepayment) return false;
+    final row = _rowsByMonth[_monthKey(node.dateTime)];
+    return row != null &&
+        row.isArchived &&
+        row.prepaymentDetails.any(
+          (detail) =>
+              detail.fromStatement && detail.eventId == node.prepaymentId,
+        );
+  }
 
-  bool _isArchivedPayment(CalendarMonthlyRule rule, DateTime anchor) =>
-      rule.type != CalendarMonthlyRuleType.note &&
-      _archivedRows.containsKey(_monthKey(anchor));
+  /// 按扣款所属账期分别判断两笔贷款；工作日顺延到次月仍属于原账期。
+  bool _skipMonthlyOccurrence(CalendarMonthlyRule rule, DateTime anchor) {
+    if (rule.type == CalendarMonthlyRuleType.note) return false;
+    final month = _monthKey(anchor);
+    final row = _rowsByMonth[month];
+    if (row != null && row.isArchived) return true;
+    final commercial = rule.type == CalendarMonthlyRuleType.commercialPayment;
+    if (row == null) {
+      // 计划结束后的月份沿用末期余额；缺少早期账单不能推断当时已结清。
+      final last = _loanPlanner.planRows.lastOrNull;
+      if (last == null || month.compareTo(last.month) <= 0) return false;
+      return (commercial ? last.commercialClosing : last.providentClosing) <
+          0.01;
+    }
+    final closing = commercial ? row.commercialClosing : row.providentClosing;
+    if (closing >= 0.01) return false;
+    // 同月既有正常月供又结清时保留最后一次扣款，金额与日历明细同源。
+    final payment = _paymentDetailsForRow(row, rule.type)!.payment;
+    return (payment * 100).round() == 0;
+  }
 
   static String _monthKey(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}';
@@ -483,13 +503,11 @@ class CalendarViewModel extends ChangeNotifier {
   }
 
   void _onLoanPlanChanged() {
-    final rows = {
-      for (final row in _loanPlanner.planRows)
-        if (row.isArchived) row.month: row,
-    };
-    final archiveChanged = !mapEquals(rows, _archivedRows);
-    _archivedRows = rows;
-    if (!_syncPrepaymentNodes() && archiveChanged && !_isInitializing) {
+    final rows = {for (final row in _loanPlanner.planRows) row.month: row};
+    final planChanged = !mapEquals(rows, _rowsByMonth);
+    _rowsByMonth = rows;
+    // 提前还款或更正账单会改变结清月，需要同步更新日历角标及已排通知。
+    if (!_syncPrepaymentNodes() && planChanged && !_isInitializing) {
       _refreshUnreadState();
       _queueNotificationRefresh();
       notifyListeners();
@@ -598,7 +616,7 @@ class CalendarViewModel extends ChangeNotifier {
         !month.isAfter(now);
         month = DateTime(month.year, month.month + 1, 1)
       ) {
-        if (_isArchivedPayment(rule, month)) continue;
+        if (_skipMonthlyOccurrence(rule, month)) continue;
         final occurrence = _ruleOccurrence(rule, month.year, month.month);
         if (occurrence.isBefore(rule.createdAt) || occurrence.isAfter(now)) {
           continue;
@@ -628,7 +646,7 @@ class CalendarViewModel extends ChangeNotifier {
       if (!rule.notificationsEnabled) continue;
       for (var offset = -2; offset < 14; offset++) {
         final month = DateTime(now.year, now.month + offset, 1);
-        if (_isArchivedPayment(rule, month)) continue;
+        if (_skipMonthlyOccurrence(rule, month)) continue;
         final occurrence = _ruleOccurrence(rule, month.year, month.month);
         if (occurrence.isBefore(rule.createdAt) || !occurrence.isAfter(now)) {
           continue;
@@ -702,7 +720,7 @@ class CalendarViewModel extends ChangeNotifier {
       if (!rule.notificationsEnabled) continue;
       for (var offset = -2; offset < 20; offset++) {
         final month = DateTime(now.year, now.month + offset, 1);
-        if (_isArchivedPayment(rule, month)) continue;
+        if (_skipMonthlyOccurrence(rule, month)) continue;
         final occurrence = _ruleOccurrence(rule, month.year, month.month);
         if (occurrence.isBefore(rule.createdAt) ||
             !occurrence.isAfter(now) ||
@@ -749,12 +767,8 @@ class CalendarViewModel extends ChangeNotifier {
     CalendarMonthlyRule rule,
     DateTime anchor,
   ) {
-    final month = _monthKey(anchor);
-    for (final row in _loanPlanner.rows) {
-      if (row.month != month) continue;
-      return _paymentDetailsForRow(row, rule.type);
-    }
-    return null;
+    final row = _rowsByMonth[_monthKey(anchor)];
+    return row == null ? null : _paymentDetailsForRow(row, rule.type);
   }
 
   CalendarPaymentDetails? _paymentDetailsForRow(

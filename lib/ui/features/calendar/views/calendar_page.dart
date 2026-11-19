@@ -89,10 +89,9 @@ class _CalendarPageState extends State<CalendarPage> {
     });
   }
 
-  void _changeMonth(int amount) {
+  void _changeMonth(DateTime month) {
     _resetWideScroll();
     setState(() {
-      final month = DateTime(_visibleMonth.year, _visibleMonth.month + amount);
       final day = math
           .min(_selectedDate.day, DateTime(month.year, month.month + 1, 0).day)
           .toInt();
@@ -260,8 +259,7 @@ class _CalendarPageState extends State<CalendarPage> {
         isWorkday: viewModel.isWorkdayOn,
         holidayName: viewModel.holidayNameOn,
         onDateSelected: _selectDate,
-        onPreviousMonth: () => _changeMonth(-1),
-        onNextMonth: () => _changeMonth(1),
+        onMonthChanged: _changeMonth,
         onToday: () => _selectDate(DateTime.now()),
         showHeading: !wide,
         fitMonthRows: wide,
@@ -348,12 +346,16 @@ class _CalendarPageState extends State<CalendarPage> {
             if (wide) ...[
               IconButton(
                 tooltip: '上个月',
-                onPressed: () => _changeMonth(-1),
+                onPressed: () => _changeMonth(
+                  DateUtils.addMonthsToMonthDate(_visibleMonth, -1),
+                ),
                 icon: const Icon(Icons.chevron_left),
               ),
               IconButton(
                 tooltip: '下个月',
-                onPressed: () => _changeMonth(1),
+                onPressed: () => _changeMonth(
+                  DateUtils.addMonthsToMonthDate(_visibleMonth, 1),
+                ),
                 icon: const Icon(Icons.chevron_right),
               ),
               IconButton(

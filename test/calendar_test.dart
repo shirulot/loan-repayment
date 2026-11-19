@@ -351,7 +351,10 @@ void main() {
       overrides[20261000 + day] = false;
     }
     overrides[20261008] = true;
-    final loanPlanner = LoanPlannerViewModel();
+    final loanPlanner = LoanPlannerViewModel(
+      calculator: LoanCalculator(currentDate: DateTime(2026, 9, 28)),
+      initialConfig: const LoanPlanConfig(providentOpeningBalance: 10000),
+    );
     final holidayCache = _MemoryHolidayCache(
       const ChineseHolidayCalendarSnapshot(),
     );
@@ -386,7 +389,10 @@ void main() {
 
   test('monthly reminders stay unread until each occurrence is opened', () {
     var now = DateTime(2026, 3, 2, 11);
-    final loanPlanner = LoanPlannerViewModel();
+    final loanPlanner = LoanPlannerViewModel(
+      calculator: LoanCalculator(currentDate: DateTime(2026, 1, 1)),
+      initialConfig: const LoanPlanConfig(commercialOpeningBalance: 10000),
+    );
     final calendarViewModel = CalendarViewModel(
       initialData: CalendarData(
         monthlyRules: <CalendarMonthlyRule>[
@@ -689,8 +695,7 @@ void main() {
             holidayName: (date) =>
                 date.month == 10 && date.day == 1 ? '国庆节' : null,
             onDateSelected: (_) {},
-            onPreviousMonth: () {},
-            onNextMonth: () {},
+            onMonthChanged: (_) {},
             onToday: () {},
           ),
         ),
