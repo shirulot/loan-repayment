@@ -67,7 +67,7 @@ class CalendarOccurrenceDetailSheet extends StatelessWidget {
                   ? _money(prepayment.interestDueNow)
                   : '待核',
             ),
-            if (occurrence.isArchived && prepayment.interestRecorded)
+            if (prepayment.fromStatement && prepayment.interestRecorded)
               _DetailRow(
                 '实际扣款合计',
                 _money(prepayment.amount + prepayment.interestDueNow),

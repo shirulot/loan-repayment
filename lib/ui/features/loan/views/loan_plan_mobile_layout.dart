@@ -274,17 +274,35 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
       );
     }
     if (recentEditPending) _recentPrepaymentSyncTimer?.cancel();
-    widget.viewModel.updateConfig(
+    if (!_applyConfig(
       updatedConfig,
       initialBalance: LoanInitialBalance(
         date: initialDate,
         commercial: initialCommercial,
         provident: initialProvident,
       ),
-    );
+    )) {
+      return;
+    }
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('参数已应用，计划已重算。')));
+  }
+
+  /// 补录与后续实扣冲突时保留编辑内容，让用户可以直接修正。
+  bool _applyConfig(
+    LoanPlanConfig config, {
+    LoanInitialBalance? initialBalance,
+  }) {
+    try {
+      widget.viewModel.updateConfig(config, initialBalance: initialBalance);
+      return true;
+    } on FormatException catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
+      return false;
+    }
   }
 
   bool _hasValidRecentPrepaymentDates() {
@@ -335,7 +353,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
 
   void _commitRecentPrepayments() {
     if (!mounted) return;
-    widget.viewModel.updateConfig(
+    _applyConfig(
       widget.viewModel.config.copyWith(
         recentPrepayments: _eventsFromControllers(),
       ),
@@ -399,13 +417,15 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     // A fast confirmation must not be followed by the old delayed sync.
     _recentPrepaymentSyncTimer?.cancel();
     final correctedEvents = _eventsFromControllers();
+    if (!_applyConfig(
+      widget.viewModel.config.copyWith(recentPrepayments: correctedEvents),
+    )) {
+      return;
+    }
     setState(() {
       _recentPrepayments = correctedEvents;
       _correctingRecentPrepaymentIds.remove(eventId);
     });
-    widget.viewModel.updateConfig(
-      widget.viewModel.config.copyWith(recentPrepayments: correctedEvents),
-    );
   }
 
   void _removeRecentPrepayment(String eventId) {
@@ -464,7 +484,7 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
 
   void _saveCashFlow() {
     final old = widget.viewModel.config;
-    widget.viewModel.updateConfig(
+    _applyConfig(
       old.copyWith(
         monthlySalary: _number('monthlySalary', old.monthlySalary),
         monthlyExtraIncome: _number(
@@ -503,14 +523,12 @@ class _MobileLoanPlanLayoutState extends State<MobileLoanPlanLayout> {
     final frequency = LoanPlanFrequencySelector(
       config: widget.config,
       amountsMasked: widget.viewModel.amountsMasked,
-      onChanged: widget.viewModel.updateConfig,
+      onChanged: _applyConfig,
     );
     final method = LoanRepaymentMethodSelector(
       method: widget.config.repaymentMethod,
       onChanged: (method) {
-        widget.viewModel.updateConfig(
-          widget.viewModel.config.copyWith(repaymentMethod: method),
-        );
+        _applyConfig(widget.viewModel.config.copyWith(repaymentMethod: method));
       },
     );
     final settings = LoanMobileSettingsGroup(

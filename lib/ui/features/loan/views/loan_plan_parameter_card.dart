@@ -153,7 +153,14 @@ class _LoanPlanParameterCardState extends State<LoanPlanParameterCard> {
       _controllers['remainingTerms']?.text =
           '${updatedConfig.remainingTermsAt(widget.viewModel.calculationDate)}';
     }
-    widget.viewModel.updateConfig(updatedConfig);
+    try {
+      widget.viewModel.updateConfig(updatedConfig);
+    } on FormatException catch (error) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+      return;
+    }
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('参数已应用，计划已重算。')));

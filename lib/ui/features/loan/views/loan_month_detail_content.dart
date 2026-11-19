@@ -141,7 +141,7 @@ class LoanMonthDetailContent extends StatelessWidget {
                     .valueFor(LoanPlanColumnKey.totalReduction)
                     .amount,
               ),
-              if (!row.isArchived) _moneyItem('可供提前还贷额', row.availableFunds),
+              _moneyItem('可供提前还贷额', row.availableFunds),
             ],
           ),
           LoanDetailCard(
@@ -168,7 +168,7 @@ class LoanMonthDetailContent extends StatelessWidget {
               LoanPrepaymentDetailCard(
                 index: index,
                 detail: row.prepaymentDetails[index],
-                line: displayed[index + (row.isArchived ? 1 : 0)],
+                line: displayed[index],
                 amountsMasked: amountsMasked,
                 isArchived: row.isArchived,
               ),
@@ -185,19 +185,10 @@ class LoanMonthDetailContent extends StatelessWidget {
                   '公积金正常扣款后余额',
                   row.providentOpening - row.providentPrincipal,
                 ),
-                _moneyItem('转息前月供', row.nextMonthBasePayment),
-                _optionalMoneyItem(
-                  '较上一行转息前月供减少',
-                  displayed.first
-                      .valueFor(LoanPlanColumnKey.nextMonthBaseReduction)
-                      .amount,
-                ),
-                _moneyItem('转息差额', row.transferDifference),
-              ] else ...[
-                _moneyItem('下月基础月供', row.nextMonthBasePayment),
-                _optionalMoneyItem('下月基础月供减少', nextMonthBasePaymentReduction),
-                _moneyItem('转息差额', row.transferDifference),
               ],
+              _moneyItem('下月基础月供', row.nextMonthBasePayment),
+              _optionalMoneyItem('下月基础月供减少', nextMonthBasePaymentReduction),
+              _moneyItem('转息差额', row.transferDifference),
               _moneyItem('商贷期末余额', row.commercialClosing),
               _moneyItem('公积金期末余额', row.providentClosing),
               _moneyItem('本金合计', row.totalBalance),
@@ -253,7 +244,7 @@ class LoanPrepaymentDetailCard extends StatelessWidget {
           _moneyItem('当日提前利息', detail.interestDueNow)
         else
           LoanDetailItem('当日提前利息', amountsMasked ? '****' : '待核'),
-        if (isArchived && detail.interestRecorded)
+        if (detail.fromStatement && detail.interestRecorded)
           _moneyItem('实际扣款合计', detail.amount + detail.interestDueNow),
         if (!isArchived) _moneyItem('下月结转利息', detail.nextMonthDeferredInterest),
         if (detail.hasNormalPaymentBefore) ...[
@@ -263,10 +254,6 @@ class LoanPrepaymentDetailCard extends StatelessWidget {
           _moneyItem('本笔前公积金月供本金', detail.providentPrincipalBefore),
           _moneyItem('本笔前公积金月供利息', detail.providentInterestBefore),
           _moneyItem('本笔前公积金月供合计', detail.providentPaymentBefore),
-        ],
-        if (detail.paymentAfter case final after?) ...[
-          _moneyItem('本笔后商贷月供（测算）', after.commercial.payment),
-          _moneyItem('本笔后公积金月供（测算）', after.provident.payment),
         ],
         if (line.previous != null)
           for (final column in const [

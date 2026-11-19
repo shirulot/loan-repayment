@@ -48,6 +48,9 @@ class LoanPlannerViewModel extends ChangeNotifier {
   List<LoanPlanRow> _rows = const <LoanPlanRow>[];
   Future<void> _pendingSave = Future<void>.value();
   bool _amountsMasked = false;
+  bool _writingImport = false;
+  String? _historyError;
+  String? get historyError => _historyError;
   final List<CalculatorReference> _temporaryCalculatorReferences = [];
   var _nextTemporaryCalculatorReference = 1;
   var _calculatorExpression = '';
@@ -201,7 +204,19 @@ class LoanPlannerViewModel extends ChangeNotifier {
       );
     }
     if (currentRow.isArchived) {
-      return (currentRow.commercialClosing, currentRow.providentClosing);
+      // 计划行保留整月交易，首页只读取截至今天最后一笔实扣后的两类余额。
+      final due = currentRow.prepaymentDetails
+          .where(
+            (detail) =>
+                !DateTime.parse(detail.repaymentDate!).isAfter(calculationDate),
+          )
+          .lastOrNull;
+      return (
+        due?.commercialClosing ??
+            currentRow.commercialOpening - currentRow.commercialPrincipal,
+        due?.providentClosing ??
+            currentRow.providentOpening - currentRow.providentPrincipal,
+      );
     }
     var commercial =
         currentRow.commercialOpening - currentRow.commercialPrincipal;
@@ -255,13 +270,18 @@ class LoanPlannerViewModel extends ChangeNotifier {
     // readable, but never use this fallback for event-based repayment data:
     // multiple transactions in one month must be ordered by their dates.
     final eventMonths = candidates.map((event) => event.repaymentMonth).toSet();
+    final bills = {for (final bill in _paymentHistory) bill.month: bill};
     for (final row in _rows) {
       if (eventMonths.contains(row.month)) continue;
       final amount = _actualPrepayments[row.month];
       if (amount == null || amount <= 0) continue;
+      // 已有历史实扣可以解释这笔月合计，删除其他行时也无需再生成替补行。
+      if (bills[row.month]?.coversLegacyMonthlyAmount(amount) ?? false) {
+        continue;
+      }
       candidates.add(
         RecentPrepayment(
-          id: 'settled-${row.month}',
+          id: RecentPrepayment.legacyMonthlyId(row.month),
           amount: amount,
           repaymentDate: row.effectivePrepaymentDate ?? '${row.month}-01',
           isSettled: true,
@@ -521,16 +541,41 @@ class LoanPlannerViewModel extends ChangeNotifier {
     } catch (_) {
       // A missing or unavailable cache falls back to the default model.
     }
-    _recalculate();
+    try {
+      final previous = _config;
+      _config = LoanPaymentHistory.reconcileMonthlyPlaceholders(
+        _config,
+        _paymentHistory,
+      );
+      _recalculate(migrateLegacyRates: true);
+      // 旧缓存只在确实移除了占位行时落盘，后续启动直接读取修正后的账本。
+      if (!identical(previous, _config)) await _enqueueSave(_saveState);
+    } on FormatException catch (error) {
+      _historyError = error.message;
+      _rows = const [];
+      notifyListeners();
+    }
   }
 
   void updateActualPrepayment(String month, double? value) {
+    if (_writingImport) throw const FormatException('正在保存导入的账单，请稍后再应用修改。');
+    final proposed = Map.of(_actualPrepayments);
     if (value == null) {
-      _actualPrepayments.remove(month);
+      proposed.remove(month);
     } else {
-      _actualPrepayments[month] = value;
+      proposed[month] = value;
     }
-    _recalculate();
+    final rows = _calculator.calculate(
+      _config,
+      proposed,
+      history: _paymentHistory,
+    );
+    _actualPrepayments
+      ..clear()
+      ..addAll(proposed);
+    _rows = List.unmodifiable(rows);
+    _historyError = null;
+    notifyListeners();
     _persist();
   }
 
@@ -538,7 +583,31 @@ class LoanPlannerViewModel extends ChangeNotifier {
     LoanPlanConfig config, {
     LoanInitialBalance? initialBalance,
   }) {
+    if (_writingImport) throw const FormatException('正在保存导入的账单，请稍后再应用修改。');
+    config = LoanPaymentHistory.reconcileMonthlyPlaceholders(
+      config,
+      _paymentHistory,
+    );
     // 只在该月的逐笔金额或日期确实更改时，用用户更正后的记录替代旧月合计。
+    if (!identical(_config.recentPrepayments, config.recentPrepayments)) {
+      final linked = {
+        for (final bill in _paymentHistory)
+          for (final debit in bill.prepayments)
+            if (debit.eventId != null) debit.eventId!: debit,
+      };
+      for (final event in config.recentPrepayments) {
+        final debit = linked[event.id];
+        if (debit != null &&
+            (event.repaymentDate != debit.date ||
+                (event.amount * 100).round() !=
+                    ((debit.commercialPrincipal + debit.providentPrincipal) *
+                            100)
+                        .round())) {
+          throw FormatException('${debit.date} 这笔已与银行流水核对。请新增补录，或导入更正后的账单。');
+        }
+      }
+    }
+    final proposedAmounts = Map.of(_actualPrepayments);
     if (_actualPrepayments.isNotEmpty &&
         !identical(_config.recentPrepayments, config.recentPrepayments)) {
       Map<String, (String, double)> entriesFor(
@@ -549,34 +618,85 @@ class LoanPlannerViewModel extends ChangeNotifier {
           if (event.repaymentMonth == month)
             event.id: (event.repaymentDate, event.amount),
       };
-      _actualPrepayments.removeWhere(
+      proposedAmounts.removeWhere(
         (month, _) =>
             !mapEquals(entriesFor(_config, month), entriesFor(config, month)),
       );
     }
+    final rows = _calculator.calculate(
+      config,
+      proposedAmounts,
+      history: _paymentHistory,
+    );
     _recordedInitialBalance = initialBalance ?? _recordedInitialBalance;
+    _actualPrepayments
+      ..clear()
+      ..addAll(proposedAmounts);
     _config = config;
-    _recalculate();
+    _rows = List.unmodifiable(rows);
+    _historyError = null;
+    notifyListeners();
     _persist();
   }
 
   /// Applies a user-selected backup and persists it as the new local state.
   Future<void> restoreImportedState(LoanCachedState state) {
-    _config = state.config;
-    _actualPrepayments
-      ..clear()
-      ..addAll(state.actualPrepayments);
-    _calculatorExpression = state.calculatorExpression;
-    _restoreTemporaryCalculatorResults(
-      state.temporaryCalculatorResults,
-      state.temporaryCalculatorExpressions,
-    );
-    _recalculate();
-    // 旧版备份没有历史字段，按月合并时保留本机已有账单。
-    return mergePaymentHistory(
-      state.paymentHistory,
-      recordedInitialBalance: state.recordedInitialBalance,
-    );
+    // 旧版纯参数备份即时应用，保留既有同步调用契约。
+    if (state.paymentHistory.isEmpty && _paymentHistory.isEmpty) {
+      _config = state.config;
+      _actualPrepayments
+        ..clear()
+        ..addAll(state.actualPrepayments);
+      _calculatorExpression = state.calculatorExpression;
+      _restoreTemporaryCalculatorResults(
+        state.temporaryCalculatorResults,
+        state.temporaryCalculatorExpressions,
+      );
+      _recordedInitialBalance =
+          state.recordedInitialBalance ?? _recordedInitialBalance;
+      _recalculate();
+      return _enqueueSave(_saveState);
+    }
+    return _writeImport(() async {
+      final frozen = <LoanPaymentHistory>[];
+      final history = _mergedPaymentHistory(state.paymentHistory);
+      final config = LoanPaymentHistory.reconcileMonthlyPlaceholders(
+        state.config,
+        history,
+      );
+      final rows = _calculator.calculate(
+        config,
+        state.actualPrepayments,
+        history: history,
+        frozenHistory: frozen,
+        migrateLegacyRates: true,
+        validateImport: true,
+      );
+      final opening = state.recordedInitialBalance ?? _recordedInitialBalance;
+      await _cacheService.save(
+        config,
+        state.actualPrepayments,
+        paymentHistory: frozen,
+        recordedInitialBalance: opening,
+        calculatorExpression: state.calculatorExpression,
+        temporaryCalculatorResults: state.temporaryCalculatorResults,
+        temporaryCalculatorExpressions: state.temporaryCalculatorExpressions,
+      );
+      _config = config;
+      _actualPrepayments
+        ..clear()
+        ..addAll(state.actualPrepayments);
+      _calculatorExpression = state.calculatorExpression;
+      _restoreTemporaryCalculatorResults(
+        state.temporaryCalculatorResults,
+        state.temporaryCalculatorExpressions,
+      );
+      _recordedInitialBalance = opening;
+      _paymentHistory = List.unmodifiable(frozen);
+      _rows = List.unmodifiable(rows);
+      _historyError = null;
+      notifyListeners();
+    });
   }
 
   /// 预览导入合并后最早账单的初期本金，供确认弹窗比较。
@@ -596,13 +716,30 @@ class LoanPlannerViewModel extends ChangeNotifier {
     List<LoanPaymentHistory> records, {
     LoanInitialBalance? recordedInitialBalance,
   }) {
-    return _enqueueSave(() async {
+    return _writeImport(() async {
       final merged = _mergedPaymentHistory(records);
+      final config = LoanPaymentHistory.reconcileMonthlyPlaceholders(
+        _config,
+        merged,
+      );
+      final frozen = <LoanPaymentHistory>[];
+      _calculator.calculate(
+        config,
+        _actualPrepayments,
+        history: merged,
+        validateImport: true,
+        frozenHistory: frozen,
+        priorHistory: {
+          for (final record in _paymentHistory) record.month: record,
+        },
+      );
       await _saveState(
-        paymentHistory: merged,
+        config: config,
+        paymentHistory: frozen,
         recordedInitialBalance: recordedInitialBalance,
       );
-      _paymentHistory = merged;
+      _config = config;
+      _paymentHistory = List.unmodifiable(frozen);
       _recordedInitialBalance =
           recordedInitialBalance ?? _recordedInitialBalance;
       _recalculate();
@@ -627,29 +764,19 @@ class LoanPlannerViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _recalculate() {
-    final archived = <LoanPlanRow>[];
-    for (final record in _paymentHistory) {
-      final date = DateTime.parse('${record.month}-01');
-      final previousMonth = DateTime(
-        date.year,
-        date.month,
-        0,
-      ).toIso8601String().substring(0, 7);
-      final previous = archived.lastOrNull;
-      archived.add(
-        record.toPlanRow(
-          previous: previous?.month == previousMonth ? previous : null,
-        ),
-      );
-    }
+  void _recalculate({bool migrateLegacyRates = false}) {
+    final frozen = <LoanPaymentHistory>[];
     _rows = List.unmodifiable(
       _calculator.calculate(
         _config,
         _actualPrepayments,
-        archivedMonths: archived,
+        history: _paymentHistory,
+        frozenHistory: frozen,
+        migrateLegacyRates: migrateLegacyRates,
       ),
     );
+    _paymentHistory = List.unmodifiable(frozen);
+    _historyError = null;
     notifyListeners();
   }
 
@@ -678,6 +805,17 @@ class LoanPlannerViewModel extends ChangeNotifier {
     unawaited(_enqueueSave(_saveState));
   }
 
+  /// 导入写盘期间保持其校验时使用的贷款参数；其他导入仍按提交顺序排队。
+  Future<void> _writeImport(Future<void> Function() save) =>
+      _enqueueSave(() async {
+        _writingImport = true;
+        try {
+          await save();
+        } finally {
+          _writingImport = false;
+        }
+      });
+
   Future<void> _enqueueSave(Future<void> Function() save) {
     // Take the snapshot when its turn arrives so plan edits and imports
     // always build on the latest history committed by the previous save.
@@ -687,11 +825,12 @@ class LoanPlannerViewModel extends ChangeNotifier {
   }
 
   Future<void> _saveState({
+    LoanPlanConfig? config,
     List<LoanPaymentHistory>? paymentHistory,
     LoanInitialBalance? recordedInitialBalance,
   }) {
     return _cacheService.save(
-      _config,
+      config ?? _config,
       Map<String, double?>.of(_actualPrepayments),
       paymentHistory: paymentHistory ?? _paymentHistory,
       recordedInitialBalance: recordedInitialBalance ?? _recordedInitialBalance,

@@ -475,6 +475,13 @@ class RecentPrepayment {
   final String repaymentDate;
   final bool isSettled;
 
+  /// 旧版把只有月份的实还合计临时显示为一条事件，用保留编号区别于手工录入。
+  static String legacyMonthlyId(String month) => 'settled-$month';
+
+  /// 已由用户改到具体日期的记录不再按缺失日期的占位记录处理。
+  bool isMonthlyPlaceholderFor(String month) =>
+      id == legacyMonthlyId(month) && repaymentDate == '$month-01';
+
   /// Only used while reading the former three-month fixed-field cache.
   final int? legacyMonthOffset;
 
@@ -533,6 +540,9 @@ class LoanPlanRow {
   const LoanPlanRow({
     required this.month,
     this.isArchived = false,
+    this.repaymentMethod,
+    this.commercialPaymentDate,
+    this.providentPaymentDate,
     this.commercialPaymentEvidence = LoanPaymentEvidence.statement,
     this.providentInterestEstimated = false,
     this.commercialAnnualRate,
@@ -568,8 +578,13 @@ class LoanPlanRow {
 
   final String month;
 
-  /// 历史实录行没有预算、预期提前额或转息前测算值。
+  /// 历史实录行保留当期本息及其来源。
   final bool isArchived;
+  final LoanRepaymentMethod? repaymentMethod;
+
+  /// 已知实扣日优先，缺少日期时日历沿用普通月供规则。
+  final String? commercialPaymentDate;
+  final String? providentPaymentDate;
   final LoanPaymentEvidence commercialPaymentEvidence;
   final bool providentInterestEstimated;
   final double? commercialAnnualRate;
@@ -623,20 +638,7 @@ class LoanPlanRow {
       prepaymentDetails.every((detail) => detail.interestRecorded);
 
   /// 转息导致的月供差额：实际月供合计减去转息前基础月供。
-  double get transferDifference {
-    final value = totalPayment - nextMonthBasePayment;
-    return isArchived ? (value * 100).round() / 100 : value;
-  }
-}
-
-/// 在同一期限、同一历史计息口径下测算的单类贷款月供。
-class LoanInstallmentPreview {
-  const LoanInstallmentPreview(this.principal, this.interest, this.basePayment);
-
-  final double principal;
-  final double interest;
-  final double basePayment;
-  double get payment => principal + interest;
+  double get transferDifference => totalPayment - nextMonthBasePayment;
 }
 
 class LoanPrepaymentDetail {
@@ -647,7 +649,7 @@ class LoanPrepaymentDetail {
     required this.repaymentDate,
     required this.interestDueNow,
     this.interestRecorded = true,
-    this.paymentAfter,
+    this.fromStatement = false,
     this.basePaymentBefore,
     required this.nextMonthDeferredInterest,
     required this.commercialClosing,
@@ -669,12 +671,12 @@ class LoanPrepaymentDetail {
   final double interestDueNow;
   final bool interestRecorded;
 
-  /// 同月预测明细按该笔前的计息本金计算的普通月息月供。
+  /// 银行实扣凭证与后补的测算交易在日历中保留各自来源。
+  final bool fromStatement;
+
+  /// 同月还款明细按该笔前的计息本金计算的普通月息月供。
   final double? basePaymentBefore;
 
-  /// 历史账单按笔展示还款后的月供；此预览只用于对照，不参与下一期扣款。
-  final ({LoanInstallmentPreview commercial, LoanInstallmentPreview provident})?
-  paymentAfter;
   final double nextMonthDeferredInterest;
 
   /// Balance immediately after this transaction, used by an expanded plan row.

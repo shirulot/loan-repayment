@@ -62,7 +62,7 @@ const defaultLoanPlanVisibleColumns = <LoanPlanColumnKey>{
   LoanPlanColumnKey.totalBalance,
 };
 
-/// 预测沿用原有逐笔展示，历史单独列出月供及每笔实际提前还款。
+/// 首笔承载当期月供，同月后续各行承接此前的扣款。
 class LoanPlanDisplayRow {
   const LoanPlanDisplayRow({
     this.previous,
@@ -82,7 +82,7 @@ class LoanPlanDisplayRow {
   static List<LoanPlanDisplayRow> expand(List<LoanPlanRow> rows) {
     final result = <LoanPlanDisplayRow>[];
     for (final row in rows) {
-      if (row.isArchived || row.prepaymentDetails.isEmpty) {
+      if (row.prepaymentDetails.isEmpty) {
         result.add(
           LoanPlanDisplayRow(
             row: row,
@@ -98,7 +98,7 @@ class LoanPlanDisplayRow {
             row: row,
             previous: result.lastOrNull,
             prepayment: detail,
-            isPrimary: !row.isArchived && index == 0,
+            isPrimary: index == 0,
             isLast: index == row.prepaymentDetails.length - 1,
           ),
         );
@@ -123,67 +123,50 @@ class LoanPlanDisplayRow {
   /// 表格与即时比差共用逐笔取值，保留未知金额、零值和待核利息的区别。
   LoanPlanCellValue valueFor(LoanPlanColumnKey column) {
     final prepayment = this.prepayment;
-    late final archivedPayment = row.isArchived && prepayment == null;
-    // 历史月供行对应实际扣款，各提前行使用本笔后的测算；预测行沿用逐笔前预览。
-    final after = prepayment?.paymentAfter;
+    // 月供只反映此前交易；本笔扣减只进入本行余额。
     late final paymentBefore = prepayment?.hasNormalPaymentBefore == true
         ? prepayment
         : null;
     late final isLaterSameMonthPrepayment = prepayment != null && !isPrimary;
     late final commercialPayment =
-        after?.commercial.payment ??
         paymentBefore?.commercialPaymentBefore ??
         (isLaterSameMonthPrepayment ? 0 : row.commercialPayment);
     late final commercialPrincipal =
-        after?.commercial.principal ??
         paymentBefore?.commercialPrincipalBefore ??
         (isLaterSameMonthPrepayment ? 0 : row.commercialPrincipal);
     late final commercialInterest =
-        after?.commercial.interest ??
         paymentBefore?.commercialInterestBefore ??
         (isLaterSameMonthPrepayment ? 0 : row.commercialInterest);
     late final providentPayment =
-        after?.provident.payment ??
         paymentBefore?.providentPaymentBefore ??
         (isLaterSameMonthPrepayment ? 0 : row.providentPayment);
     late final providentPrincipal =
-        after?.provident.principal ??
         paymentBefore?.providentPrincipalBefore ??
         (isLaterSameMonthPrepayment ? 0 : row.providentPrincipal);
     late final providentInterest =
-        after?.provident.interest ??
         paymentBefore?.providentInterestBefore ??
         (isLaterSameMonthPrepayment ? 0 : row.providentInterest);
-    late final totalPayment = after != null
-        ? after.commercial.payment + after.provident.payment
-        : paymentBefore != null
+    late final totalPayment = paymentBefore != null
         ? paymentBefore.commercialPaymentBefore +
               paymentBefore.providentPaymentBefore
         : isLaterSameMonthPrepayment
         ? 0.0
         : row.totalPayment;
-    late final basePayment = after == null
-        ? (prepayment?.basePaymentBefore ?? row.nextMonthBasePayment)
-        : after.commercial.basePayment + after.provident.basePayment;
+    late final basePayment =
+        prepayment?.basePaymentBefore ?? row.nextMonthBasePayment;
     late final interestRecorded =
-        archivedPayment ||
-        (prepayment?.interestRecorded ?? row.prepaymentInterestRecorded);
-    late final prepaymentInterest = archivedPayment
-        ? null
-        : prepayment?.interestDueNow ?? row.prepaymentInterestDueNow;
-    // 历史月供有独立展示行，提前本金只计入对应的交易行。
-    final repaymentAmount = archivedPayment
-        ? null
-        : prepayment?.amount ?? row.usedPrepayment;
-    late final repaymentDate = archivedPayment
-        ? (row.commercialPayment > 0 ? '${row.month}-01' : null)
-        : prepayment?.repaymentDate ?? row.effectivePrepaymentDate;
-    late final commercialBalance = archivedPayment
-        ? row.commercialOpening - row.commercialPrincipal
-        : prepayment?.commercialClosing ?? row.commercialClosing;
-    late final providentBalance = archivedPayment
-        ? row.providentOpening - row.providentPrincipal
-        : prepayment?.providentClosing ?? row.providentClosing;
+        prepayment?.interestRecorded ?? row.prepaymentInterestRecorded;
+    late final prepaymentInterest =
+        prepayment?.interestDueNow ?? row.prepaymentInterestDueNow;
+    final repaymentAmount = prepayment?.amount ?? row.usedPrepayment;
+    late final repaymentDate =
+        prepayment?.repaymentDate ??
+        row.effectivePrepaymentDate ??
+        row.commercialPaymentDate;
+    late final commercialBalance =
+        prepayment?.commercialClosing ?? row.commercialClosing;
+    late final providentBalance =
+        prepayment?.providentClosing ?? row.providentClosing;
     // 单月校准首行有时没有正常扣款，这种空基准沿用原来的缺值处理。
     double? reduction(
       LoanPlanColumnKey source,
@@ -193,7 +176,6 @@ class LoanPlanDisplayRow {
       final prior = previous;
       if (prior == null) return fallback;
       if (source != LoanPlanColumnKey.nextMonthBasePayment &&
-          !prior.row.isArchived &&
           prior.row.totalPayment == 0 &&
           prior.prepayment?.hasNormalPaymentBefore != true) {
         return fallback;
@@ -212,9 +194,7 @@ class LoanPlanDisplayRow {
         private: true,
       ),
       LoanPlanColumnKey.repaymentStatus => LoanPlanCellValue.text(
-        row.isArchived
-            ? (archivedPayment ? '正常月供' : '提前还款')
-            : prepayment?.isRecorded == true
+        prepayment?.isRecorded == true
             ? '已录入'
             : row.usedPrepayment > 0
             ? '自动测算'
@@ -222,7 +202,7 @@ class LoanPlanDisplayRow {
       ),
       LoanPlanColumnKey.commercialPayment => LoanPlanCellValue.money(
         commercialPayment,
-        dashWhenZero: !row.isArchived,
+        dashWhenZero: true,
       ),
       LoanPlanColumnKey.commercialPrincipal => LoanPlanCellValue.money(
         commercialPrincipal,
@@ -239,7 +219,7 @@ class LoanPlanDisplayRow {
       ),
       LoanPlanColumnKey.providentPayment => LoanPlanCellValue.money(
         providentPayment,
-        dashWhenZero: !row.isArchived,
+        dashWhenZero: true,
       ),
       LoanPlanColumnKey.providentPrincipal => LoanPlanCellValue.money(
         providentPrincipal,
@@ -268,14 +248,14 @@ class LoanPlanDisplayRow {
       ),
       LoanPlanColumnKey.prepaymentInterest => LoanPlanCellValue.money(
         interestRecorded ? prepaymentInterest : null,
-        dashWhenZero: !row.isArchived,
+        dashWhenZero: true,
         pending: !interestRecorded,
       ),
       LoanPlanColumnKey.nextMonthBasePayment => LoanPlanCellValue.money(
         basePayment,
       ),
       LoanPlanColumnKey.transferDifference => LoanPlanCellValue.money(
-        after == null && prepayment?.basePaymentBefore == null
+        prepayment?.basePaymentBefore == null
             ? row.transferDifference
             : totalPayment - basePayment,
       ),

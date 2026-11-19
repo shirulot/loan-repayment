@@ -193,22 +193,9 @@ class CalendarViewModel extends ChangeNotifier {
     if (_archivedRows.isEmpty) return occurrences;
     final row = _archivedRows[_monthKey(day)];
     if (row != null) {
-      if (day.day == 1 && row.commercialPayment > 0) {
-        final note = switch (row.commercialPaymentEvidence) {
-          LoanPaymentEvidence.statement => '历史商贷月供',
-          LoanPaymentEvidence.debitMatched => '实扣已核对，本息按余额和实扣反推',
-          LoanPaymentEvidence.estimated => '月供和扣款日按历史还款条件推算',
-        };
-        occurrences.add(
-          _archivedMonthlyPayment(
-            row,
-            day,
-            CalendarMonthlyRuleType.commercialPayment,
-            note,
-          ),
-        );
-      }
       for (final (index, detail) in row.prepaymentDetails.indexed) {
+        // 有首页事件身份的补录由普通日历节点负责，包括未来日期的提醒。
+        if (!detail.fromStatement && detail.eventId != null) continue;
         final date = LoanPlanConfig.parseLoanStartDate(
           detail.repaymentDate ?? '',
         );
@@ -226,29 +213,52 @@ class CalendarViewModel extends ChangeNotifier {
         );
       }
     }
-    final providentRule = _data.monthlyRules
-        .where(
-          (rule) => rule.type == CalendarMonthlyRuleType.providentFirstWorkday,
-        )
-        .firstOrNull;
-    for (var offset = -2; offset <= 0; offset++) {
-      final anchor = DateTime(day.year, day.month + offset);
-      final historical = _archivedRows[_monthKey(anchor)];
-      if (historical == null || historical.providentPayment <= 0) continue;
-      final date = providentRule == null
-          ? _workdayCalendar.firstWorkday(anchor.year, anchor.month)
-          : _ruleOccurrence(providentRule, anchor.year, anchor.month);
-      if (!_isSameDay(date, day)) continue;
-      occurrences.add(
-        _archivedMonthlyPayment(
-          historical,
-          day,
-          CalendarMonthlyRuleType.providentFirstWorkday,
-          historical.providentInterestEstimated
-              ? '公积金利息和扣款日按还款规则估算'
-              : '扣款日按公积金还款规则估算',
-        ),
-      );
+    // 已知实扣日覆盖规则；缺少日期时，两种贷款都使用对应的普通月供调度器。
+    for (final type in [
+      CalendarMonthlyRuleType.commercialPayment,
+      CalendarMonthlyRuleType.providentFirstWorkday,
+    ]) {
+      final rule =
+          _data.monthlyRules.where((item) => item.type == type).firstOrNull ??
+          CalendarMonthlyRule(
+            id: 'history-default',
+            type: type,
+            createdAt: day,
+          );
+      for (var offset = -2; offset <= 0; offset++) {
+        final anchor = DateTime(day.year, day.month + offset);
+        final bill = _archivedRows[_monthKey(anchor)];
+        if (bill == null) continue;
+        final commercial = type == CalendarMonthlyRuleType.commercialPayment;
+        if ((commercial ? bill.commercialPayment : bill.providentPayment) <=
+            0) {
+          continue;
+        }
+        final actual = commercial
+            ? bill.commercialPaymentDate
+            : bill.providentPaymentDate;
+        final date = actual == null
+            ? _ruleOccurrence(rule, anchor.year, anchor.month)
+            : DateTime.parse(actual);
+        if (!_isSameDay(date, day)) continue;
+        final source = commercial
+            ? switch (bill.commercialPaymentEvidence) {
+                LoanPaymentEvidence.statement => '历史商贷月供',
+                LoanPaymentEvidence.debitMatched => '实扣已核对，本息按余额和实扣反推',
+                LoanPaymentEvidence.estimated => '商贷月供按历史还款条件推算',
+              }
+            : bill.providentInterestEstimated
+            ? '公积金利息按历史还款条件推算'
+            : '历史公积金月供';
+        occurrences.add(
+          _archivedMonthlyPayment(
+            bill,
+            date,
+            type,
+            actual == null ? '$source，扣款日按日历规则估算' : '$source，账单实扣日',
+          ),
+        );
+      }
     }
     return occurrences;
   }
@@ -276,7 +286,11 @@ class CalendarViewModel extends ChangeNotifier {
 
   bool _isArchivedPrepayment(CalendarNode node) =>
       node.source == CalendarNodeSource.prepayment &&
-      _archivedRows.containsKey(_monthKey(node.dateTime));
+      (_archivedRows[_monthKey(node.dateTime)]?.prepaymentDetails.any(
+            (detail) =>
+                detail.fromStatement && detail.eventId == node.prepaymentId,
+          ) ??
+          false);
 
   bool _isArchivedPayment(CalendarMonthlyRule rule, DateTime anchor) =>
       rule.type != CalendarMonthlyRuleType.note &&
@@ -780,7 +794,7 @@ class CalendarViewModel extends ChangeNotifier {
           row.commercialOpening - commercialPrincipal,
         ),
         remainingTerms: row.remainingTerms,
-        repaymentMethod: row.isArchived ? null : config.repaymentMethod,
+        repaymentMethod: row.repaymentMethod ?? config.repaymentMethod,
       ),
       CalendarMonthlyRuleType.providentFirstWorkday => CalendarPaymentDetails(
         payment: providentPrincipal + providentInterest,
@@ -793,7 +807,7 @@ class CalendarViewModel extends ChangeNotifier {
         openingBalance: row.providentOpening,
         closingBalance: math.max(0, row.providentOpening - providentPrincipal),
         remainingTerms: row.remainingTerms,
-        repaymentMethod: row.isArchived ? null : config.repaymentMethod,
+        repaymentMethod: row.repaymentMethod ?? config.repaymentMethod,
       ),
       CalendarMonthlyRuleType.note => null,
     };

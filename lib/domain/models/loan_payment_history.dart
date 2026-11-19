@@ -1,3 +1,4 @@
+import '../services/loan_calculator.dart';
 import 'loan_models.dart';
 
 /// 初期本金和该笔余额的日期，独立于预测使用的校准金额。
@@ -60,6 +61,10 @@ class LoanPaymentHistory {
   LoanPaymentHistory._({
     required this.month,
     required this.remainingTerms,
+    this.repaymentMethod,
+    this.manualMode,
+    this.commercialDate,
+    this.providentDate,
     required this.commercial,
     required this.provident,
     required this.commercialPaymentEvidence,
@@ -71,11 +76,49 @@ class LoanPaymentHistory {
 
   final String month;
   final int remainingTerms;
+
+  /// 导入时冻结当期还款条件，避免首页调整影响既有账单。
+  final LoanRepaymentMethod? repaymentMethod;
+  final bool? manualMode;
+  final String? commercialDate;
+  final String? providentDate;
   final LoanPaymentHistoryAmounts commercial;
   final LoanPaymentHistoryAmounts provident;
   final LoanPaymentEvidence commercialPaymentEvidence;
   final bool providentInterestEstimated;
   final List<LoanPaymentHistoryPrepayment> prepayments;
+
+  /// 只有同月唯一等额的流水，或整月流水之和，能解释无日期的旧月合计。
+  bool coversLegacyMonthlyAmount(double amount) {
+    if (prepayments.isEmpty || amount <= 0) return false;
+    final cents = (amount * 100).round();
+    var total = 0;
+    var matches = 0;
+    for (final debit in prepayments) {
+      final principal = debit._commercial + debit._provident;
+      total += principal;
+      if (principal == cents) matches++;
+    }
+    return matches == 1 || total == cents;
+  }
+
+  /// 用保留银行日期和本息的明细取代旧版合成行。普通事件仍由逐笔身份规则处理。
+  static LoanPlanConfig reconcileMonthlyPlaceholders(
+    LoanPlanConfig config,
+    List<LoanPaymentHistory> history,
+  ) {
+    if (history.isEmpty) return config;
+    final byMonth = {for (final bill in history) bill.month: bill};
+    final events = config.recentPrepayments.where((event) {
+      final month = event.repaymentMonth;
+      return month == null ||
+          !event.isMonthlyPlaceholderFor(month) ||
+          !(byMonth[month]?.coversLegacyMonthlyAmount(event.amount) ?? false);
+    }).toList();
+    return events.length == config.recentPrepayments.length
+        ? config
+        : config.copyWith(recentPrepayments: events);
+  }
 
   /// 整批校验后才允许导入，避免错误文件只覆盖一部分历史。
   static List<LoanPaymentHistory> parseList(Object? value) {
@@ -146,8 +189,33 @@ class LoanPaymentHistory {
     if (commercialBalance < 0 || providentBalance < 0) {
       throw FormatException('$month 的归还本金超过同类贷款的期初余额。');
     }
+    String? debitDate(String key) {
+      final value = item[key];
+      if (value == null) return null;
+      if (value is! String ||
+          !value.startsWith('$month-') ||
+          DateTime.tryParse(value)?.toIso8601String().substring(0, 10) !=
+              value) {
+        throw FormatException('$month 的 $key 须为本月有效日期。');
+      }
+      return value;
+    }
+
+    final method = item['repaymentMethod'];
+    final manual = item['manualMode'];
+    if (method != null &&
+            !LoanRepaymentMethod.values.any((m) => m.name == method) ||
+        manual != null && manual is! bool) {
+      throw FormatException('$month 的还款条件无效。');
+    }
     return LoanPaymentHistory._(
       month: month,
+      commercialDate: debitDate('commercialPaymentDate'),
+      providentDate: debitDate('providentPaymentDate'),
+      manualMode: manual as bool?,
+      repaymentMethod: method == null
+          ? null
+          : LoanRepaymentMethod.fromJson(method),
       remainingTerms: terms,
       commercial: commercial,
       provident: provident,
@@ -160,6 +228,10 @@ class LoanPaymentHistory {
   Map<String, Object?> toJson() => {
     'month': month,
     'remainingTerms': remainingTerms,
+    'repaymentMethod': ?repaymentMethod?.name,
+    'manualMode': ?manualMode,
+    'commercialPaymentDate': ?commercialDate,
+    'providentPaymentDate': ?providentDate,
     'commercial': commercial.toJson(),
     'provident': provident.toJson(),
     if (commercialPaymentEvidence != LoanPaymentEvidence.statement)
@@ -169,119 +241,123 @@ class LoanPaymentHistory {
       'prepayments': prepayments.map((item) => item.toJson()).toList(),
   };
 
-  /// 生成账单月行，逐笔冲减真实本金，期末余额供后续月份接续。
-  LoanPlanRow toPlanRow({LoanPlanRow? previous}) {
-    // 与等额本金测算口径一致，商贷在上月实际提前还款后按天计息。
-    final date = DateTime.parse('$month-01');
-    final commercialDays = (previous?.commercialPrepayment ?? 0) > 0
-        ? DateTime(date.year, date.month, 0).day
-        : 30;
-    final commercialRate =
-        commercial.annualRate ?? commercial._inferAnnualRate(commercialDays);
-    final providentRate =
-        provident.annualRate ?? provident._inferAnnualRate(30);
-    final basePayment =
-        commercial._basePayment(commercialRate) +
-        provident._basePayment(providentRate);
-    var commercialClosing = commercial._opening - commercial._principal;
-    var providentClosing = provident._opening - provident._principal;
-    var commercialPrepaid = 0;
-    var providentPrepaid = 0;
-    var totalInterest = 0;
-    final details = <LoanPrepaymentDetail>[];
-    for (final item in prepayments) {
-      // 同月预览沿用同一期账单的本息比例，只计入此前各笔提前归还的本金。
-      final commercialBefore = commercial._previewAfter(
-        commercialPrepaid,
-        commercialRate,
-      );
-      final providentBefore = provident._previewAfter(
-        providentPrepaid,
-        providentRate,
-      );
-      commercialClosing -= item._commercial;
-      providentClosing -= item._provident;
-      commercialPrepaid += item._commercial;
-      providentPrepaid += item._provident;
-      totalInterest += item._interest ?? 0;
-      final actual = item._commercial + item._provident;
-      details.add(
-        LoanPrepaymentDetail(
-          eventId: null,
-          repaymentDate: item.date,
-          amount: actual / 100,
-          isRecorded: true,
-          interestDueNow: (item._interest ?? 0) / 100,
-          interestRecorded: item._interest != null,
-          nextMonthDeferredInterest: 0,
-          commercialClosing: commercialClosing / 100,
-          providentClosing: providentClosing / 100,
-          paymentAfter: (
-            commercial: commercial._previewAfter(
-              commercialPrepaid,
-              commercialRate,
-            ),
-            provident: provident._previewAfter(providentPrepaid, providentRate),
-          ),
-          commercialPrincipalBefore: commercialBefore.principal,
-          commercialInterestBefore: commercialBefore.interest,
-          commercialPaymentBefore: commercialBefore.payment,
-          providentPrincipalBefore: providentBefore.principal,
-          providentInterestBefore: providentBefore.interest,
-          providentPaymentBefore: providentBefore.payment,
-        ),
-      );
+  /// 相邻原始账单必须衔接；导入的新账单也可以包含首页补录后的真实余额。
+  void validateOpening(LoanPaymentHistory prior, LoanPlanRow effective) {
+    void check(
+      String label,
+      int opening,
+      int originalClosing,
+      double replayedClosing,
+    ) {
+      if (opening != originalClosing &&
+          opening != (replayedClosing * 100).round()) {
+        throw FormatException(
+          '$month 的$label期初本金与 ${prior.month} 期末不符，请核对两个月之间的还款。',
+        );
+      }
     }
-    final usedPrepayment = (commercialPrepaid + providentPrepaid) / 100;
-    final totalPayment = commercial._payment + provident._payment;
-    return LoanPlanRow(
-      month: month,
-      isArchived: true,
-      commercialPaymentEvidence: commercialPaymentEvidence,
-      providentInterestEstimated: providentInterestEstimated,
-      commercialAnnualRate: commercialRate,
-      providentAnnualRate: providentRate,
-      commercialAnnualRateInferred: commercial.annualRate == null,
-      providentAnnualRateInferred: provident.annualRate == null,
-      remainingTerms: remainingTerms,
-      commercialOpening: commercial.openingBalance,
-      commercialPrincipal: commercial.principal,
-      commercialInterest: commercial.interest,
-      commercialPayment: commercial.payment,
-      providentOpening: provident.openingBalance,
-      providentPrincipal: provident.principal,
-      providentInterest: provident.interest,
-      providentPayment: provident.payment,
-      totalPayment: totalPayment / 100,
-      commercialReduction: _reduction(
-        previous?.commercialPayment,
-        commercial._payment,
-      ),
-      providentReduction: _reduction(
-        previous?.providentPayment,
-        provident._payment,
-      ),
-      totalReduction: _reduction(previous?.totalPayment, totalPayment),
-      availableFunds: 0,
-      effectivePrepaymentDate: details.firstOrNull?.repaymentDate,
-      prepaymentDates: prepayments.map((item) => item.date).toList(),
-      prepaymentDetails: details,
-      prepaymentInterestDueNow: totalInterest / 100,
-      nextMonthBasePayment: basePayment / 100,
-      nextMonthBasePaymentReduction: _reduction(
-        previous?.nextMonthBasePayment,
-        basePayment,
-      ),
-      usedPrepayment: usedPrepayment,
-      commercialPrepayment: commercialPrepaid / 100,
-      providentPrepayment: providentPrepaid / 100,
-      commercialClosing: commercialClosing / 100,
-      providentClosing: providentClosing / 100,
+
+    final originalCommercial =
+        prior.commercial._opening -
+        prior.commercial._principal -
+        prior.prepayments.fold<int>(0, (total, p) => total + p._commercial);
+    final originalProvident =
+        prior.provident._opening -
+        prior.provident._principal -
+        prior.prepayments.fold<int>(0, (total, p) => total + p._provident);
+    check(
+      '商贷',
+      commercial._opening,
+      originalCommercial,
+      effective.commercialClosing,
+    );
+    check(
+      '公积金',
+      provident._opening,
+      originalProvident,
+      effective.providentClosing,
     );
   }
 
-  static double? _reduction(double? previous, int currentCents) =>
-      previous == null ? null : ((previous * 100).round() - currentCents) / 100;
+  /// 固化反推利率与导入时已有的同笔交易身份；重复金额按出现次数一对一认领。
+  LoanPaymentHistory freeze(
+    LoanPlanConfig config,
+    int commercialDays, {
+    LoanPaymentHistory? existing,
+  }) {
+    if (repaymentMethod != null &&
+        manualMode != null &&
+        commercial.hasFrozenRate &&
+        provident.hasFrozenRate &&
+        prepayments.every((p) => p.identityChecked)) {
+      return this;
+    }
+    final available = [
+      ...config.recentPrepayments.where((e) => e.repaymentMonth == month),
+    ];
+    final prior = [...?existing?.prepayments];
+    final linked = <LoanPaymentHistoryPrepayment>[];
+    for (final p in prepayments) {
+      final i = prior.indexWhere(
+        (old) =>
+            old.date == p.date &&
+            old._commercial == p._commercial &&
+            old._provident == p._provident,
+      );
+      final old = i < 0 ? null : prior.removeAt(i);
+      final matched = p.identityChecked
+          ? p
+          : old?.identityChecked == true
+          ? old
+          : null;
+      final id = matched != null
+          ? matched.eventId
+          : available
+                .where(
+                  (e) =>
+                      e.repaymentDate == p.date &&
+                      (e.amount * 100).round() == p._commercial + p._provident,
+                )
+                .firstOrNull
+                ?.id;
+      available.removeWhere((e) => e.id == id);
+      linked.add(
+        LoanPaymentHistoryPrepayment._(
+          p.date,
+          p._commercial,
+          p._provident,
+          p._interest,
+          eventId: id,
+          identityChecked: true,
+        ),
+      );
+    }
+    return LoanPaymentHistory._(
+      month: month,
+      remainingTerms: remainingTerms,
+      repaymentMethod:
+          repaymentMethod ??
+          existing?.repaymentMethod ??
+          config.repaymentMethod,
+      manualMode:
+          manualMode ?? existing?.manualMode ?? config.isPlanRepaymentMode,
+      commercialDate: commercialDate ?? existing?.commercialDate,
+      providentDate: providentDate ?? existing?.providentDate,
+      commercial: commercial.freeze(commercialDays, existing?.commercial),
+      provident: provident.freeze(30, existing?.provident),
+      commercialPaymentEvidence: commercialPaymentEvidence,
+      providentInterestEstimated: providentInterestEstimated,
+      prepayments: List.unmodifiable(linked),
+    );
+  }
+
+  /// 单张账单预览也使用计划引擎，不另设一套逐笔公式。
+  LoanPlanRow toPlanRow({LoanPlanRow? previous}) =>
+      const LoanCalculator().historyRow(
+        this,
+        const LoanPlanConfig(isPlanRepaymentMode: true),
+        previous: previous,
+      );
 }
 
 /// 历史金额按分存储，导入文件仍沿用现有备份的元单位。
@@ -290,8 +366,9 @@ class LoanPaymentHistoryAmounts {
     this._opening,
     this._principal,
     this._interest,
-    this.annualRate,
-  );
+    this.annualRate, [
+    this.rateInferred = false,
+  ]);
 
   final int _opening;
   final int _principal;
@@ -304,29 +381,29 @@ class LoanPaymentHistoryAmounts {
   double get interest => _interest / 100;
   double get payment => _payment / 100;
 
-  /// 同一期、同利率下月供本息随计息本金等比例变化；首笔保留账单精度。
-  LoanInstallmentPreview _previewAfter(int prepaid, double? rate) {
-    if (prepaid == 0 || _opening == 0) {
-      return LoanInstallmentPreview(
-        principal,
-        interest,
-        _basePayment(rate) / 100,
+  final bool rateInferred;
+  bool get hasFrozenRate => annualRate != null || rateInferred;
+  LoanPaymentHistoryAmounts freeze(int days, [LoanPaymentHistoryAmounts? old]) {
+    if (hasFrozenRate) return this;
+    // 同一张原始账单重导时沿用已经确认的当期利率。
+    if (old != null &&
+        old.hasFrozenRate &&
+        old._opening == _opening &&
+        old._interest == _interest) {
+      return LoanPaymentHistoryAmounts._(
+        _opening,
+        _principal,
+        _interest,
+        old.annualRate,
+        old.rateInferred,
       );
     }
-    if (prepaid >= _opening - _principal) {
-      return const LoanInstallmentPreview(0, 0, 0);
-    }
-    // 固定本期日数和期数，对累计提前本金后的余额重算；正常本金已在流水扣过。
-    final balance = _opening - prepaid;
-    final principalCents = (_principal * (balance / _opening)).round();
-    final interestCents = (_interest * (balance / _opening)).round();
-    final baseInterest = rate == null
-        ? interestCents
-        : (balance * rate / 12).round();
-    return LoanInstallmentPreview(
-      principalCents / 100,
-      interestCents / 100,
-      (principalCents + baseInterest) / 100,
+    return LoanPaymentHistoryAmounts._(
+      _opening,
+      _principal,
+      _interest,
+      _inferAnnualRate(days),
+      true,
     );
   }
 
@@ -335,10 +412,6 @@ class LoanPaymentHistoryAmounts {
     // 利息按分入账，年利率保留到 0.001 个百分点。
     return (_interest * 360 / (_opening * days) * 100000).round() / 100000;
   }
-
-  /// 保留该期正常本金，只把利息按历史年利率折算为普通月息。
-  int _basePayment(double? rate) =>
-      _principal + (rate == null ? _interest : (_opening * rate / 12).round());
 
   static LoanPaymentHistoryAmounts _parse(Object? value, String label) {
     if (value is! Map) throw FormatException('$label 缺少金额明细。');
@@ -352,14 +425,16 @@ class LoanPaymentHistoryAmounts {
       _readCents(value['principal'], '$label 正常还款本金'),
       _readCents(value['interest'], '$label 正常还款利息'),
       (rate as num?)?.toDouble(),
+      value['annualRateInferred'] == true,
     );
   }
 
-  Map<String, double> toJson() => {
+  Map<String, Object?> toJson() => {
     'openingBalance': openingBalance,
     'principal': principal,
     'interest': interest,
     'annualRate': ?annualRate,
+    if (rateInferred) 'annualRateInferred': true,
   };
 }
 
@@ -369,8 +444,16 @@ class LoanPaymentHistoryPrepayment {
     this.date,
     this._commercial,
     this._provident,
-    this._interest,
-  );
+    this._interest, {
+    this.eventId,
+    this.identityChecked = false,
+  });
+
+  final String? eventId;
+  final bool identityChecked;
+  double get commercialPrincipal => _commercial / 100;
+  double get providentPrincipal => _provident / 100;
+  double? get interest => _interest == null ? null : _interest / 100;
 
   final String date;
   final int _commercial;
@@ -406,11 +489,15 @@ class LoanPaymentHistoryPrepayment {
       commercial,
       provident,
       interest == null ? null : _readCents(interest, '$date 提前还款利息'),
+      eventId: item['eventId'] is String ? item['eventId'] as String : null,
+      identityChecked: item['identityChecked'] == true,
     );
   }
 
   Map<String, Object?> toJson() => {
     'date': date,
+    'eventId': ?eventId,
+    if (identityChecked) 'identityChecked': true,
     if (_commercial > 0) 'commercialPrincipal': _commercial / 100,
     if (_provident > 0) 'providentPrincipal': _provident / 100,
     if (_interest != null) 'interest': _interest / 100,

@@ -43,6 +43,16 @@ class LoanCachedState {
         }
       }
     }
+    final history = json.containsKey('paymentHistory')
+        ? LoanPaymentHistory.parseList(json['paymentHistory'])
+        : const <LoanPaymentHistory>[];
+    // 已由流水解释的旧月合计不能再转写给同月另一笔手工事件。
+    for (final bill in history) {
+      final amount = actualPrepayments[bill.month];
+      if (amount != null && bill.coversLegacyMonthlyAmount(amount)) {
+        actualPrepayments.remove(bill.month);
+      }
+    }
     var config = LoanPlanConfig.fromJson(Map<String, dynamic>.from(configJson));
     if (actualPrepayments.isNotEmpty && config.recentPrepayments.isNotEmpty) {
       final rawRecords = configJson['recentPrepayments'];
@@ -82,9 +92,7 @@ class LoanCachedState {
     return LoanCachedState(
       config: config,
       actualPrepayments: actualPrepayments,
-      paymentHistory: json.containsKey('paymentHistory')
-          ? LoanPaymentHistory.parseList(json['paymentHistory'])
-          : const <LoanPaymentHistory>[],
+      paymentHistory: history,
       recordedInitialBalance: initialBalance == null
           ? null
           : LoanInitialBalance.fromJson(initialBalance),

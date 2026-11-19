@@ -404,9 +404,11 @@ class _LoanPlanDetailPageState extends State<LoanPlanDetailPage> {
       builder: (context, constraints) {
         // 矮横屏与键盘弹出时，把列设置收进标题栏，优先保留表格高度。
         final compactHeader = widget.embedded && constraints.maxHeight < 360;
-        final tableHint = widget.viewModel.paymentHistory.isEmpty
-            ? '在首页「最近三笔还款」填写金额和日期即可记录，还款金额只含本金。'
-            : '历史月供行显示当期月供，历史提前还款行显示本笔扣款后的月供测算。';
+        final tableHint =
+            widget.viewModel.historyError ??
+            (widget.viewModel.paymentHistory.isEmpty
+                ? '在首页「最近三笔还款」填写金额和日期即可记录，还款金额只含本金。'
+                : '历史提前还款行显示本笔扣款前的月供和扣款后的剩余本金。');
         final minimumTableWidth = LoanPlanTable.minimumWidth(
           visibleColumns: _visibleColumns,
         );
